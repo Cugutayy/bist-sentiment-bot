@@ -42,15 +42,26 @@ universe:
 # Veri ingestion
 ingestion:
   price_history_days: 1825    # 5 yıl geriye
+  # Türkçe finans/ekonomi RSS feed'leri — hepsi probe ile doğrulandı (HTTP 200).
+  # KAP açıklamaları (bedelsiz, temettü, kar, ihale vb.) bu kaynaklarda
+  # anında haber olarak çıkıyor — KAP'ı doğrudan scrape etmeye gerek yok.
   news_feeds:
     - name: BloombergHT
       url: https://www.bloomberght.com/rss
-    - name: Reuters TR
-      url: https://www.reuters.com/rssfeed/turkeyNews
     - name: Dünya
       url: https://www.dunya.com/rss?dunyarss=anasayfa
-    # NOT: bazı feed'ler dropoff yapabilir. ingestion/news_collector.py
-    # her feed için ayrı try/except ve logged failure.
+    - name: AA Ekonomi
+      url: https://www.aa.com.tr/tr/rss/default?cat=ekonomi
+    - name: Hürriyet Ekonomi
+      url: https://www.hurriyet.com.tr/rss/ekonomi
+    - name: Sabah Ekonomi
+      url: https://www.sabah.com.tr/rss/ekonomi.xml
+    - name: Habertürk Ekonomi
+      url: https://www.haberturk.com/rss/kategori/ekonomi.xml
+    - name: Yeni Şafak Ekonomi
+      url: https://www.yenisafak.com/rss?xml=ekonomi
+    # NOT: feed dropoff'a karşı news_collector her feed için ayrı try/except.
+    # 6 ay'da bir feed listesi bakım: scripts/probe_feeds.py
 
 # NLP / Sentiment
 nlp:

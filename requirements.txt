@@ -27,6 +27,7 @@ loguru>=0.7.2             # daha temiz logging
 pytest>=8.3.0
 pytest-cov>=5.0.0
 
-# Faz 1B
-playwright>=1.47.0        # KAP headless Chrome scraping
+# Faz 1B (opsiyonel — şimdilik kullanılmıyor)
+# Mevcut 7 TR finans RSS feed'i KAP açıklamalarını anında haberleştiriyor;
+# headless browser scraping'e gerek kalmadı.
 # praw>=7.7.1             # Reddit (sonra)

@@ -62,32 +62,29 @@ python -m nlp.sentiment_claude
 python main.py predict --date today
 ```
 
-## KAP Scraping (Faz 1B) — Setup
+## KAP Açıklamaları — Neden Doğrudan Scrape Etmiyoruz?
 
-KAP, 2024 sonunda Next.js + Server Components mimarisine geçti. Standart
-`requests` ile disclosure çekmek artık imkansız — headless Chrome
-(Playwright) gerekli.
+KAP, 2024 sonunda Next.js + React Server Components mimarisine geçti.
+Standart HTTP istekleriyle disclosure çekmek artık imkansız — JS chunk
+dosyalarında bile endpoint string'i yok (Server Action opaque payload).
+Tek yol headless Chrome (Playwright) olurdu.
 
+**Daha temiz çözüm:** KAP açıklamaları (bedelsiz hisse, temettü, kar
+açıklaması, ihale alımı vb.) saniyeler içinde **AA, Hürriyet, Sabah,
+BloombergHT, Yeni Şafak, Dünya, Habertürk** gibi haber kaynaklarına
+mirror'lanıyor. Bu 7 RSS feed sentiment için yeterli sinyal sağlıyor
+— hem teknik hem hukuki olarak temiz.
+
+Feed'leri 6 ayda bir doğrulamak için (dropoff savunması):
 ```bash
-pip install playwright
-python -m playwright install chromium    # bir kez, ~150MB
+# Faz 1B'de eklenecek:
+python scripts/probe_feeds.py
 ```
-
-İlk reverse engineering adımı (KAP'ın gerçek XHR/Server Action
-endpoint'lerini yakalamak için):
-
-```bash
-python scripts/explore_kap.py
-```
-
-Bu script bir Chrome instance açar, KAP bildirim sayfasını yükler ve
-tüm network çağrılarını `data/raw/kap_debug/` altına yazar. Çıktıyı
-inceledikten sonra `ingestion/kap_collector.py`'ye parse logic ekleyeceğiz.
 
 ## Yol Haritası
 
-- **Faz 1A** — Repo + price + news + sentiment prototip + backtest iskeleti ✅
-- **Faz 1B** — KAP Playwright iskelet ✅ · parse logic 🔄 · Reddit ⏳
+- **Faz 1A** — Repo + price + 7-feed news + Claude sentiment + backtest iskeleti ✅
+- **Faz 1B** — Feed sağlık check scripti · (opsiyonel) Reddit ingestion
 - **Faz 2**  — Feature engineering + LightGBM training + walk-forward backtest
 - **Faz 3**  — Shortlist üretimi + günlük email/telegram push
 - **Faz 4**  — Canlı izleme (4-8 hafta), performans loglama
