@@ -42,7 +42,12 @@ def _fetch_ticker(ticker: str, start: str, end: str | None = None) -> pd.DataFra
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
     df.columns = [c.lower() for c in df.columns]
-    df = df.reset_index().rename(columns={"Date": "date"})
+    # yfinance 1.4: index.name None olabilir → ilk kolonu açıkça "date" yap
+    df.index.name = "date"
+    df = df.reset_index()
+    # Bazı sürümlerde reset_index "index" döndürür — onu da yakala
+    if "date" not in df.columns and "index" in df.columns:
+        df = df.rename(columns={"index": "date"})
     df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
     df["ticker"] = ticker
     return df[["date", "ticker", "open", "high", "low", "close", "volume"]]
