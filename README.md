@@ -62,10 +62,32 @@ python -m nlp.sentiment_claude
 python main.py predict --date today
 ```
 
+## KAP Scraping (Faz 1B) — Setup
+
+KAP, 2024 sonunda Next.js + Server Components mimarisine geçti. Standart
+`requests` ile disclosure çekmek artık imkansız — headless Chrome
+(Playwright) gerekli.
+
+```bash
+pip install playwright
+python -m playwright install chromium    # bir kez, ~150MB
+```
+
+İlk reverse engineering adımı (KAP'ın gerçek XHR/Server Action
+endpoint'lerini yakalamak için):
+
+```bash
+python scripts/explore_kap.py
+```
+
+Bu script bir Chrome instance açar, KAP bildirim sayfasını yükler ve
+tüm network çağrılarını `data/raw/kap_debug/` altına yazar. Çıktıyı
+inceledikten sonra `ingestion/kap_collector.py`'ye parse logic ekleyeceğiz.
+
 ## Yol Haritası
 
 - **Faz 1A** — Repo + price + news + sentiment prototip + backtest iskeleti ✅
-- **Faz 1B** — KAP scraping (Playwright), Reddit ingestion
+- **Faz 1B** — KAP Playwright iskelet ✅ · parse logic 🔄 · Reddit ⏳
 - **Faz 2**  — Feature engineering + LightGBM training + walk-forward backtest
 - **Faz 3**  — Shortlist üretimi + günlük email/telegram push
 - **Faz 4**  — Canlı izleme (4-8 hafta), performans loglama
