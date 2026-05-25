@@ -1,0 +1,17 @@
+# BIST Sentiment Bot — Quant-style dark theme
+# Portfolio tracker design tokens
+
+[theme]
+base = "dark"
+primaryColor = "#4ade80"
+backgroundColor = "#0f0f0f"
+secondaryBackgroundColor = "#1a1a1a"
+textColor = "#e8e8e8"
+font = "serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

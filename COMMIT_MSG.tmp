@@ -1,40 +1,53 @@
-feat: Streamlit web dashboard + predict bug fix + final review
+feat: dashboard quant redesign — koyu tema, Newsreader serif, Plotly, glassmorphism KPI
 
-Yeni: dashboard/app.py — Streamlit web arayüzü
------------------------------------------------
-7 sayfa:
-1. Özet — KPI metrikleri + sistem durumu + honest disclosure
-2. Backtest — equity curve, aylık return, en iyi/kötü günler,
-   per-ticker frekans, fold breakdown, bias adjustment slider
-3. Bugünün Shortlist'i — top-N + neden
-4. Paper Trading — live ↔ backtest cross-check (Sharpe karşılaştırma)
-5. Sentiment — ticker × tarih sentiment pivot + özet
-6. Veri Kalitesi — yfinance audit table (NaN, jump, gap, last_date)
-7. Konfig & Mimari — settings.yaml + mimari diyagram + honest disclosure
+Önceki Streamlit default görünüm "AI-generated basic site" gibi duruyordu.
+Kullanıcı talebi: portfolio-tracker tarzı quant aesthetic.
 
-Çalıştırma:
-  streamlit run dashboard/app.py     # yerel → http://localhost:8501
-  Cloud deploy: share.streamlit.io (ücretsiz, GitHub bağlanır)
+Yeniden tasarım (dashboard/app.py + .streamlit/config.toml):
 
-Bug fix: strategy/shortlist.py predict
----------------------------------------
-build_training_set'te halisünasyon defansı için sentiment NaN
-toleransı eklemiştik ama generate_shortlist'te aynı düzeltme yoktu
-→ sentiment yokken tüm satırlar atılıyor, snapshot boş kalıyor,
-"Tarih NaT için veri yok" hatası.
+CSS sistem
+- Dark theme: bg=#0a0a0a, surface=#141414, accent=#4ade80, gold=#f59e0b
+- Newsreader serif italic headers (h1: 2.1rem 300, h2: italic muted)
+- DM Mono font sayılar (KPI value, tablo)
+- Inter font UI metinleri
+- Glassmorphism kartlar (gradient bg, hover transform + accent border)
 
-Düzeltme: dropna(subset=price_feat_cols), sent_* NaN korunur.
-LightGBM missing branch ile predict edebilir.
+KPI kart sistemi (st.metric replacement)
+- HTML inline (tek satır) — markdown 4-space indent code-block escape bug fix
+- Renk tone: pos (yeşil), neg (kırmızı), neutral
+- kpi-grid: responsive grid layout
 
-Final review (33/33 test geçti):
-- Syntax: tüm Python dosyaları OK
-- Import graph: 18 modül, circular yok
-- Deprecation warning: 0
-- Backtest: end-to-end çalışır + artifact persistence
-- Predict: çalışır + paper trade log
-- Aggregate: çalışır (sentiment data yokken boş output)
-- 2141 satır kod, 382 test satırı (17.8% test/code oranı)
+Plotly entegrasyonu (st.line_chart yerine)
+- Backtest equity curve: portföy fill (#4ade80 + alpha), XU100 BH dotted
+- Aylık return bar: renk per-month (yeşil/kırmızı)
+- Ticker frekansı horizontal bar
+- PLOTLY_LAYOUT preset: dark_template, transparent paper, DM Mono fonts
 
-requirements.txt: streamlit + plotly eklendi.
+Sidebar yeniden
+- BIST "Sentiment Bot" italic accent — quant brand
+- "QUANT RESEARCH PLATFORM · v0.5" caption
+- Honest System sidebar box (gold border)
+
+Honest disclosure
+- HTML kartlar: warn (gold) ve info (green) variants
+- Her sayfada görünür: survivorship bias, next-day execution
+
+7 sayfa tamamen yeniden:
+- Genel Bakış: 6 KPI + sistem durumu + 2 disclosure card
+- Backtest: equity plotly + 6 metrik KPI + aylık bar + top/worst tablolar
+  + horizontal ticker freq + fold breakdown + bias slider
+- Bugünün Shortlist'i: top-6 KPI + full table
+- Paper Trading: live ↔ backtest cross-check KPI
+- Sentiment: RdYlGn gradient heatmap pivot
+- Veri Kalitesi: özet KPI + per-ticker audit table
+- Konfig & Mimari: ASCII directory tree + 7-item disclosure list
+
+Streamlit config (.streamlit/config.toml + CLI flags)
+- theme.base=dark, primary=#4ade80
+- Footer + Streamlit branding gizlendi
+
+Bug fix: PLOTLY_LAYOUT içinde yaxis dict olunca, fig.update_layout
+ile bir başka yaxis kwarg geçince TypeError. Çözüm: update_yaxes /
+update_xaxes ile ayrı çağrılar.
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
