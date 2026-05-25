@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Veri (ham veri büyük, kullanıcı kendisi indirir)
+data/raw/*.parquet
+data/processed/*.parquet
+data/raw/*.csv
+data/processed/*.csv
+data/cache/
+
+# Modeller
+models/*.joblib
+models/*.pkl
+
+# Loglar
+logs/
+*.log
+
+# Secrets
+.env
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Notebooks (eğer eklenirse)
+.ipynb_checkpoints/

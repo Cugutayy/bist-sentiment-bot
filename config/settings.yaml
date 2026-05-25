@@ -1,0 +1,117 @@
+# BIST Sentiment Bot — Configuration
+# Tüm "magic numbers" buraya. Kod içinde hardcoded değer YASAK.
+
+universe:
+  # BIST 100 tickers — point-in-time membership için scripts/update_universe.py
+  # ile periyodik güncelle. .IS suffix yfinance için.
+  tickers:
+    - THYAO.IS
+    - ASELS.IS
+    - GARAN.IS
+    - AKBNK.IS
+    - YKBNK.IS
+    - ISCTR.IS
+    - HALKB.IS
+    - VAKBN.IS
+    - KCHOL.IS
+    - SAHOL.IS
+    - TUPRS.IS
+    - SISE.IS
+    - EREGL.IS
+    - BIMAS.IS
+    - FROTO.IS
+    - TOASO.IS
+    - TCELL.IS
+    - TAVHL.IS
+    - PGSUS.IS
+    - EKGYO.IS
+    - PETKM.IS
+    - TTKOM.IS
+    - ARCLK.IS
+    - ENKAI.IS
+    - TKFEN.IS
+    - SASA.IS
+    - GUBRF.IS
+    - DOHOL.IS
+    - MGROS.IS
+    - SOKM.IS
+    # ... Faz 1B sonrası BIST100 tamamına genişler
+
+  benchmark: XU100.IS    # Excess return için referans
+
+# Veri ingestion
+ingestion:
+  price_history_days: 1825    # 5 yıl geriye
+  news_feeds:
+    - name: BloombergHT
+      url: https://www.bloomberght.com/rss
+    - name: Reuters TR
+      url: https://www.reuters.com/rssfeed/turkeyNews
+    - name: Dünya
+      url: https://www.dunya.com/rss?dunyarss=anasayfa
+    # NOT: bazı feed'ler dropoff yapabilir. ingestion/news_collector.py
+    # her feed için ayrı try/except ve logged failure.
+
+# NLP / Sentiment
+nlp:
+  claude_model: claude-haiku-4-5     # ucuz + hızlı + Türkçe iyi
+  max_input_tokens: 4096
+  cache_dir: data/cache/sentiment    # content-hash cache
+  batch_size: 20                     # tek istekte kaç haber
+
+# Feature engineering — hepsi t-1 lagged
+features:
+  return_windows: [5, 10, 20]
+  vol_window: 20
+  momentum_window: 60
+  sentiment_windows: [3, 7, 14]      # gün
+  rsi_window: 14
+
+# Triple barrier labeling
+labels:
+  profit_target_pct: 0.025           # +%2.5
+  stop_loss_pct: 0.015               # -%1.5
+  max_holding_days: 10
+
+# Model
+model:
+  type: lightgbm
+  params:
+    n_estimators: 400
+    learning_rate: 0.03
+    max_depth: 6
+    num_leaves: 31
+    min_child_samples: 20
+    random_state: 42
+  retrain_frequency_days: 7
+  walk_forward:
+    train_window_days: 504           # ~2 yıl
+    test_window_days: 21             # ~1 ay
+    purge_days: 5                    # train→test arası purge
+    embargo_days: 5                  # data leak savunması
+
+# BIST cost modeli (yıllık güncelle)
+costs:
+  commission_pct: 0.0005             # %0.05 broker (ortalama)
+  bsmv_pct: 0.05                     # komisyon üzerinden %5 BSMV
+  spread_bps: 15                     # bp tahmini (likit BIST 30 için 5-10, küçük cap 25+)
+  slippage_bps: 5                    # market impact tahmini
+
+# Strateji
+strategy:
+  top_n: 10                          # her gün top-N long
+  max_position_pct: 0.10             # tek hisseye max %10
+  min_liquidity_tl: 50000000         # günlük >50M TL hacim
+  sector_max_pct: 0.30               # sektör başına max %30
+
+# Risk yönetimi (sinyal seviyesinde)
+risk:
+  max_drawdown_pct: 0.15             # toplam DD aşılırsa exposure %50'e düş
+  target_annual_vol_pct: 0.20
+
+# Loglama
+logging:
+  level: INFO
+  file: logs/bist_bot.log
+  rotation: "1 day"
+  retention: "30 days"

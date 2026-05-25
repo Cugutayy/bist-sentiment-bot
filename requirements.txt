@@ -1,0 +1,32 @@
+# Veri
+yfinance>=0.2.40
+pandas>=2.2.0
+pyarrow>=15.0.0           # parquet I/O
+requests>=2.32.0
+feedparser>=6.0.11        # RSS
+
+# NLP
+anthropic>=0.39.0         # Claude API (Haiku)
+diskcache>=5.6.3          # content-hash sentiment cache
+
+# ML
+scikit-learn>=1.5.0
+lightgbm>=4.5.0
+numpy>=1.26.0
+
+# Backtest
+matplotlib>=3.9.0
+
+# Konfig + util
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+tenacity>=8.5.0           # retry/backoff
+loguru>=0.7.2             # daha temiz logging
+
+# Test
+pytest>=8.3.0
+pytest-cov>=5.0.0
+
+# Faz 1B (KAP scraping) — şimdilik yorum satırı
+# playwright>=1.47.0
+# praw>=7.7.1             # Reddit
