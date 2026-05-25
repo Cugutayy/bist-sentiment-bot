@@ -62,6 +62,32 @@ python -m nlp.sentiment_claude
 python main.py predict --date today
 ```
 
+## Bilinen yfinance / BIST Sorunları (UNUTMA)
+
+Yahoo Finance, BIST verisi için **resmi/garanti** kaynak değil; unofficial
+scraper. Şu sorunları sistemde defansif olarak ele aldık:
+
+| Sorun | Belirti | Savunma |
+|---|---|---|
+| **Bedelsiz/split adjustment bug** | Tarihsel kapanışlarda anlamsız >%50 sıçrama. Özellikle BIMAS, EREGL, ASELS, FROTO. | `data_quality.check()` JUMP_PCT_ERROR=60% eşiği — log'a kırmızı uyarı. |
+| **BIST tatil günleri NaN** | 19 Mayıs, 30 Ağustos, 29 Ekim, Ramazan/Kurban Bayramı | Modelde forward-fill veya gün-bazlı atlama. |
+| **^XU100 vs XU100.IS** | Farklı scale dönerler (101.729 vs 13.163). Aynı endeks, farklı düzeltme. | Sistemde tek seçim: **XU100.IS** (`config/settings.yaml`). |
+| **Stale data** | Yahoo bazen 1-2 iş günü geriden gelir. | `data_quality.check()` STALE_DAYS_WARN=3 — uyarı. |
+| **Volume = 0** | Yahoo veri kaybı veya gerçekten işlem yok. | %5'ten fazla 0-volume → uyarı. |
+| **chartPreviousClose mismatch** | regularMarketPrice ile arada uçurum varsa corporate action var. | Live fetch'te previousClose ham olarak log'lanır. |
+
+`ingestion/data_quality.py` her fetch sonrası otomatik çalışır,
+problemleri loguna düşer. Eşikler aynı dosyada — gerektikçe ayarla.
+
+**Cross-source validation (Faz 2):** Yahoo'ya alternatif olarak
+Investing.com / Bigpara / İş Yatırım scrape edip günlük kapanışları
+karşılaştırma (>%1 sapma varsa kırmızı bayrak).
+
+Audit komutu:
+```bash
+python scripts/audit_prices.py
+```
+
 ## KAP Açıklamaları — Neden Doğrudan Scrape Etmiyoruz?
 
 KAP, 2024 sonunda Next.js + React Server Components mimarisine geçti.

@@ -20,6 +20,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config import ROOT, SETTINGS
+from ingestion.data_quality import check_and_log
 
 RAW_PRICE_DIR = ROOT / "data" / "raw" / "prices"
 RAW_PRICE_DIR.mkdir(parents=True, exist_ok=True)
@@ -78,6 +79,7 @@ def fetch_one(ticker: str, force_full: bool = False) -> pd.DataFrame:
         start = (last + timedelta(days=1)).date().isoformat()
         if pd.to_datetime(start) > datetime.utcnow():
             logger.info(f"{ticker}: zaten güncel (son: {last.date()})")
+            check_and_log(ticker, existing)
             return existing
         logger.info(f"{ticker}: incremental fetch from {start}")
     else:
@@ -99,6 +101,9 @@ def fetch_one(ticker: str, force_full: bool = False) -> pd.DataFrame:
 
     combined.to_parquet(path, index=False)
     logger.info(f"{ticker}: {len(combined)} satır kaydedildi → {path.name}")
+
+    # Veri kalitesi check (yfinance ve BIST'e özgü bilinen sorunlar)
+    check_and_log(ticker, combined)
     return combined
 
 
