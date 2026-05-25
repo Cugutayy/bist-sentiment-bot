@@ -1,0 +1,50 @@
+feat(faz2): feature engineering + LightGBM + walk-forward backtest
+
+İlk gerçek end-to-end backtest çalışıyor. Honest sayılarla.
+
+Yeni modüller
+-------------
+- features/loader.py: per-ticker parquet → long-format panel,
+  benchmark close ile join.
+- features/feature_engineering.py: 14 feature, hepsi t-1 lagged.
+  Per-ticker (ret_5/10/20, vol_20, momentum_60, rsi_14, volume_z,
+  rel_strength_20) + cross-sectional z-score'lar.
+- models/train.py: LightGBM binary classifier, triple barrier target
+  (+1 hit = 1, diğer = 0). Fold bazlı model artifact save.
+- backtest/metrics.py: Sharpe, max_dd, CAGR, hit_rate, turnover —
+  TR risk-free %40 default.
+- backtest/engine.py: walk-forward orchestrator.
+  - load_panel → build_features (lag) → build_training_set
+  - make_splits (purged + embargoed)
+  - her fold için train + predict
+  - sinyallerden top-N long, equal weight, max %10/ticker
+  - PnL: weights[t] × rets[t] − turnover × one_way_cost
+
+Testler
+-------
+- tests/test_features.py: KRITIK look-ahead testi. Son satır close
+  değiştirilince eski satırların feature'ları DEĞİŞMEMELİ. + lag
+  davranış doğrulaması, ret/vol/rsi sanity.
+
+Düzeltmeler
+-----------
+- Backtest PnL bug: weights tüm panel datelerine reindex edilip
+  boş günler 0 dolduruluyordu → Sharpe yapay olarak çok kötü çıkıyordu.
+  Şimdi sadece test günleri için PnL hesaplanır, apples-to-apples.
+- settings.yaml walk_forward.train_window_days 504 → 252 (1 yıl).
+  Fold sayısı 3 → 6 oldu, sample anlamlılığı arttı.
+
+İlk gerçek backtest sonuçları (BIST 30, 5 yıl, 6 fold, 82 test günü)
+---------------------------------------------------------------------
+  Portföy   Sharpe -1.09  CAGR -17.3%  MaxDD -18.1%  Turnover 94%
+  XU100 BH  Sharpe -0.82  CAGR  +9.0%  MaxDD -11.3%
+
+Honest yorum:
+- Strateji XU100'ü yenmiyor — beklenen, fiyat-only features BIST gibi
+  efficient piyasada zor alpha üretir.
+- Asıl sorun TURNOVER 94% — günde portföy tamamen yenileniyor,
+  maliyetler kâr potansiyelini yiyor. Rebalance frequency düşürme
+  (haftalık) ve sinyal smoothing sonraki commit'te.
+- Sentiment data biriktikçe modele eklenecek (Faz 3).
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

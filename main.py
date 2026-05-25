@@ -54,7 +54,9 @@ def cmd_predict() -> None:
 
 
 def cmd_backtest() -> None:
-    logger.warning("backtest: Faz 2'de tamamlanacak (feature pipeline + model)")
+    from backtest.engine import run_backtest, print_report
+    result = run_backtest()
+    print_report(result)
 
 
 def main() -> int:

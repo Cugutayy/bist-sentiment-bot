@@ -96,10 +96,10 @@ model:
     random_state: 42
   retrain_frequency_days: 7
   walk_forward:
-    train_window_days: 504           # ~2 yıl
+    train_window_days: 252           # ~1 yıl — fold sayısını maksimize, train hala anlamlı
     test_window_days: 21             # ~1 ay
-    purge_days: 5                    # train→test arası purge
-    embargo_days: 5                  # data leak savunması
+    purge_days: 5                    # train→test arası purge (label overlap)
+    embargo_days: 5                  # data leak savunması (autocorrelation)
 
 # BIST cost modeli (yıllık güncelle)
 costs:
