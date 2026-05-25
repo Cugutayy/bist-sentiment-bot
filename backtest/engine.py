@@ -124,81 +124,75 @@ def _daily_pnl(
     panel: pd.DataFrame,
     cost: CostModel,
 ) -> pd.Series:
-    """Pozisyon ağırlıklarından net günlük portföy getirisi.
+    """Next-day open execution simülasyonu — gerçek hayata en yakın PnL.
 
-    DOĞRU ZAMANSAL ALIGNMENT (kritik):
-    - Feature'lar (lag=True) → t günü için close[..., t-1] verisini kullanır.
-    - Model train target: row i = "close[i]'da al, close[i+1..i+N] gözle".
-    - weights[t] = "t günü close'da girilecek pozisyon kararı".
-    - Earn edilen return: close[t]→close[t+1] = rets[t+1].
-    - PnL hesabı: weights[t] × rets[t+1] → series: gross = weights.shift(1) * rets
+    Modeli:
+    - Sinyal close[t-1]'de üretilir (features lag=True).
+    - weights[t] = "t günü için aktif portföy" (open[t]'de execute).
 
-    Sadece weights'in tanımlı olduğu (test) günler için PnL hesaplanır;
-    boş günler 0 ile doldurulup Sharpe'ı bozmaz — out-of-sample (out-of-market)
-    olan günler hiç katılmaz.
+    Per-ticker per-day pnl:
+    - HELD (önceki gün de aynı ağırlık vardı): held × cc[t] (close[t-1]→close[t])
+    - ENTERED (t günü yeni alınan): entered × intraday[t] (open[t]→close[t])
+    - EXITED (t günü satılan): exited × overnight[t] (close[t-1]→open[t])
+
+    Bu model "overnight gap riski"ni doğru simüle eder:
+    - İyi haberle gap-up: live trader gap'i kaçırır (entered_intraday < cc)
+    - Kötü haberle gap-down: live trader gap'ten KORUNMUŞ olur (exited_overnight)
+
+    Halisünasyon defansı: eksik close → o ticker'ı o gün portföyden çıkar.
     """
-    rets = panel.pivot(index="date", columns="ticker", values="close").pct_change()
-    # Weights'in olduğu günler + 1 gün ileri (PnL realisation günleri için)
     if weights.empty:
         return pd.Series(dtype=float)
 
-    all_panel_dates = sorted(rets.index)
-    # weights tarihlerini al ve her birinin BİR SONRAKİ panel tarihini ekle
-    pnl_dates = []
-    for d in weights.index:
-        idx = pd.Index(all_panel_dates).get_indexer([d])[0]
-        if idx >= 0 and idx + 1 < len(all_panel_dates):
-            pnl_dates.append(all_panel_dates[idx + 1])
-    pnl_dates = pd.DatetimeIndex(sorted(set(pnl_dates)))
+    pivot_close = panel.pivot(index="date", columns="ticker", values="close")
+    pivot_open = panel.pivot(index="date", columns="ticker", values="open")
 
-    if len(pnl_dates) == 0:
-        return pd.Series(dtype=float)
+    cc_ret = pivot_close.pct_change()
+    overnight_ret = (pivot_open / pivot_close.shift(1)) - 1
+    intraday_ret = (pivot_close / pivot_open) - 1
 
-    common_cols = weights.columns.intersection(rets.columns)
-    # Her PnL günü için, ÖNCEKİ panel günündeki weights × o günün rets'i
-    # ÖNEMLİ halisünasyon defansı: eksik return'leri 0 ile DOLDURMUYORUZ.
-    # Eğer bir ticker'ın o günkü close'u eksikse (delisting, suspended, vs.),
-    # o ticker'ı portföyden ÇIKAR ve kalan ağırlıkları renormalize et.
-    pnl_rows = {}
-    excluded_count = 0
-    for pd_date in pnl_dates:
-        prev_idx = pd.Index(all_panel_dates).get_loc(pd_date) - 1
-        prev_date = all_panel_dates[prev_idx]
-        if prev_date not in weights.index:
-            continue
-        w_row = weights.loc[prev_date, common_cols].fillna(0)
-        r_row = rets.loc[pd_date, common_cols]
-        # Eksik return olan ticker'ları çıkar (delisting / suspended / data eksik)
-        valid_mask = r_row.notna()
-        if (~valid_mask).any() and (w_row > 0).any():
-            n_missing = int(((w_row > 0) & ~valid_mask).sum())
-            if n_missing > 0:
-                excluded_count += n_missing
-            # Eksik ticker'lara olan ağırlığı pozisyon dışı kabul et (nakit)
-            w_row = w_row * valid_mask
-            r_row = r_row.fillna(0)
-        pnl_rows[pd_date] = float((w_row * r_row).sum())
-    if excluded_count > 0:
-        logger.warning(f"PnL: {excluded_count} pozisyon eksik return nedeniyle nakitleştirildi")
-    gross = pd.Series(pnl_rows).sort_index()
+    common_cols = weights.columns.intersection(pivot_close.columns)
+    w = weights.loc[:, common_cols].fillna(0).sort_index()
 
-    # Turnover: weights diff (rebalance günleri arası)
-    w_aligned = weights.loc[:, common_cols].fillna(0)
-    diff = w_aligned.diff()
-    if len(diff) > 0:
-        diff.iloc[0] = w_aligned.iloc[0]
-    turnover = diff.abs().sum(axis=1)
-    # Turnover cost'u o günün (kararın alındığı gün) değil, bir sonraki günün (entry) realisation'ında uygula
-    cost_per_date = {}
-    for d in w_aligned.index:
-        idx = pd.Index(all_panel_dates).get_loc(d)
-        if idx + 1 < len(all_panel_dates):
-            entry_day = all_panel_dates[idx + 1]
-            cost_per_date[entry_day] = turnover.loc[d] * cost.one_way_cost()
-    cost_series = pd.Series(cost_per_date).sort_index()
-    cost_series = cost_series.reindex(gross.index).fillna(0)
+    # Her weights günü için bir önceki weight'i shift'le bul (ilk gün 0 kabul)
+    w_prev = w.shift(1).fillna(0)
+    held = pd.DataFrame(
+        np.minimum(w_prev.values, w.values),
+        index=w.index, columns=w.columns,
+    )
+    exited = (w_prev - held).clip(lower=0)
+    entered = (w - held).clip(lower=0)
 
-    return gross - cost_series
+    # Returns'leri weights'in tarihlerine align et (sadece o günler için)
+    cc_aligned = cc_ret.loc[:, common_cols].reindex(w.index)
+    on_aligned = overnight_ret.loc[:, common_cols].reindex(w.index)
+    id_aligned = intraday_ret.loc[:, common_cols].reindex(w.index)
+
+    # Halisünasyon: eksik returns olan ticker × gün'leri çıkar
+    valid_cc = cc_aligned.notna()
+    valid_on = on_aligned.notna()
+    valid_id = id_aligned.notna()
+    excluded = int(((held > 0) & ~valid_cc).sum().sum() +
+                   ((exited > 0) & ~valid_on).sum().sum() +
+                   ((entered > 0) & ~valid_id).sum().sum())
+    if excluded > 0:
+        logger.warning(f"PnL: {excluded} pozisyon-gün eksik veri nedeniyle nakitleştirildi")
+
+    cc_aligned = cc_aligned.fillna(0)
+    on_aligned = on_aligned.fillna(0)
+    id_aligned = id_aligned.fillna(0)
+
+    pnl_held = (held * cc_aligned).sum(axis=1)
+    pnl_exit = (exited * on_aligned).sum(axis=1)
+    pnl_enter = (entered * id_aligned).sum(axis=1)
+    gross = pnl_held + pnl_exit + pnl_enter
+
+    # Maliyet: sadece exit + enter (held için 0)
+    turnover = exited.sum(axis=1) + entered.sum(axis=1)
+    cost_pct = turnover * cost.one_way_cost()
+
+    net = gross - cost_pct
+    return net
 
 
 def _benchmark_returns(panel: pd.DataFrame) -> pd.Series:
@@ -283,7 +277,7 @@ def run_backtest(
     bench_summary = summary(bench)
 
     logger.info(f"Backtest bitti: {len(splits)} fold, {len(net)} işlem günü")
-    return BacktestResult(
+    result = BacktestResult(
         daily_returns=net,
         daily_weights=weights,
         fold_metrics=fold_metrics,
@@ -291,6 +285,48 @@ def run_backtest(
         benchmark_returns=bench,
         benchmark_metrics=bench_summary,
     )
+
+    # Diske yaz — inceleyebilmen için
+    _save_backtest_artifacts(result, run_id)
+    return result
+
+
+def _save_backtest_artifacts(result: BacktestResult, run_id: str) -> None:
+    """Backtest sonuçlarını parquet + JSON olarak diske yaz."""
+    import json
+    from config import ROOT
+
+    out_dir = ROOT / "data" / "processed" / "backtests" / run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Daily returns + benchmark karşılaştırma
+    daily = pd.DataFrame({
+        "portfolio_return": result.daily_returns,
+        "benchmark_return": result.benchmark_returns,
+        "portfolio_equity": (1 + result.daily_returns).cumprod(),
+        "benchmark_equity": (1 + result.benchmark_returns).cumprod(),
+    })
+    daily.index.name = "date"
+    daily.reset_index().to_parquet(out_dir / "daily.parquet", index=False)
+
+    # Pozisyon ağırlıkları
+    weights = result.daily_weights.copy()
+    weights.index.name = "date"
+    weights.reset_index().to_parquet(out_dir / "weights.parquet", index=False)
+
+    # Özet (JSON)
+    summary = {
+        "run_id": run_id,
+        "n_folds": len(result.fold_metrics),
+        "n_days": len(result.daily_returns),
+        "portfolio_metrics": result.overall_metrics,
+        "benchmark_metrics": result.benchmark_metrics,
+        "fold_metrics": result.fold_metrics,
+    }
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, default=str), encoding="utf-8"
+    )
+    logger.info(f"Backtest artifact'ları → {out_dir}")
 
 
 def print_report(result: BacktestResult, cost: CostModel = DEFAULT_COSTS) -> None:

@@ -1,66 +1,55 @@
-fix: 4 halisünasyon riski + survivorship disclosure + 6 yeni test
+feat(faz5): next-day open execution + backtest artifact persistence + inspect tool
 
-Kullanıcı uyarısı: "kodun testin botun halisünasyon yaşamasın",
-"backtestlerin live testlerden daha başarılı olmaması".
+ÖNEMLİ HONEST SONUÇ
+-------------------
+Close-to-close execution (önceki) → Sharpe 1.07, CAGR 125%
+Next-day open execution (gerçekçi) → Sharpe 0.40, CAGR 60%
+Bias-adjusted → Sharpe 0.34, CAGR 54%
+XU100 BH (aynı dönem) → Sharpe 0.40, CAGR 60%
 
-Sistematik audit: panel + feature + backtest pipeline'da uydurma
-sinyaller üretebilecek 4 risk tespit edildi, hepsi düzeltildi.
+Strateji XU100 BH'yi YENMİYOR. Bu honest gerçek:
+- Overnight gap'ler close-to-close backtest'te ücretsiz görünüyordu
+- Live'da gap-up haberlerinden faydalanamazsın
+- Fiyat-only feature'lar BIST'te alfa üretmiyor (sentiment olmadan)
+- Sentiment data biriktikçe iyileşmesi beklenir
 
-RISK 1 — Sentiment 0 default (HİSPATA):
----------------------------------------
-features/feature_engineering._add_sentiment_features:
-Sentiment data yokken sent_* feature'lar 0 ile dolduruluyordu.
-Model bunu "neutral sentiment" diye yorumlar, oysa "haber yok"
-tamamen farklı bilgi.
+Next-day open execution (backtest/engine._daily_pnl)
+----------------------------------------------------
+OHLC ile gerçekçi simülasyon:
+- HELD (sticky weight): close[t-1] → close[t] = cc_ret
+- ENTERED (yeni alım): open[t] → close[t] = intraday_ret
+- EXITED (satış): close[t-1] → open[t] = overnight_ret
 
-Düzeltme: 0 yerine NaN bırak (LightGBM missing branch öğrenir) +
-yeni `sent_has_data` flag feature (binary: 0/1). 37,478/37,508
-satırda davranış değişti.
+PnL per ticker per day = held×cc + exited×on + entered×id
 
-RISK 2 — Backtest pivot fillna(0) (HİSPATA):
----------------------------------------------
-backtest/engine._daily_pnl: Eksik fiyat olan ticker'lar için
-return 0 ile dolduruluyordu → "hareketsiz hisse" iddiası.
+Bu, "overnight gap riski"ni doğru simüle eder:
+- İyi haberle gap-up: live trader gap'i kaçırır (entered×intraday < cc)
+- Kötü haberle gap-down: live trader gap'ten KORUNMUŞ olur (exited×overnight)
 
-Düzeltme: missing return olan ticker'ları o gün portföyden çıkar,
-ağırlığı nakit kabul et. Log uyarısı eklendi.
+Maliyet sadece exit + enter'a uygulanır (held için 0).
 
-RISK 3 — build_training_set dropna agresif (REGRESSION):
---------------------------------------------------------
-Sentiment NaN olunca tüm 37K satır atılıyordu.
-Düzeltme: dropna(subset=price_features + target). Sentiment NaN
-korunur, LightGBM handle eder.
+Backtest artifact persistence
+------------------------------
+data/processed/backtests/<run_id>/ altında her run için:
+- daily.parquet: portfolio_return, benchmark_return, equity curve
+- weights.parquet: date × ticker pozisyon matrisi
+- summary.json: tüm metrikler + fold breakdown
 
-RISK 4 — Survivorship bias DECLARE EDİLMİYOR:
----------------------------------------------
-Backtest bugünkü BIST 30'u 5y geriye uyguluyor. Dataset'te
-"öldürülmüş" hisseler yok — %5-15 fazladan CAGR var muhtemelen.
+scripts/inspect_backtest.py
+---------------------------
+Backtest sonuçlarını detaylı analiz:
+- ASCII equity curve
+- Aylık return tablosu
+- En iyi/kötü 5 gün + o günkü pozisyonlar
+- Per-ticker portföyde geçen gün sayısı
+- Fold-by-fold breakdown
+- --plot ile matplotlib PNG
 
-Düzeltme:
-- backtest/survivorship.py: disclosure metni + tahmini bias.
-- print_report sonuna survivorship uyarısı + realistik tahmin
-  (raw_sharpe × 0.85, raw_cagr × 0.90).
-- settings.yaml costs.slippage_bps 5 → 15 (next-day open execution
-  overnight gap proxy).
+Örnek bulgular:
+- En iyi gün: 2023-02-15 +18.47% (deprem dönüşü)
+- En çok seçilen ticker: THYAO 77 gün, TTKOM 67 gün
+- Aylık return'lerde belirgin volatility
 
-Honest sonuçlar (BIST 30, 5y, 6 fold, slipaj artırıldı):
-  Raw:        Sharpe 1.07  CAGR 125.9%
-  Bias-adj:   Sharpe 0.91  CAGR 113.3%
-  XU100 BH:   Sharpe 0.40  CAGR 60.3%
-
-6 yeni test (tests/test_halicination_defense.py):
-- test_sentiment_missing_is_nan_not_zero
-- test_sentiment_partial_data_no_implicit_zero
-- test_no_feature_columns_have_inf
-- test_rsi_bounded_0_100
-- test_volume_zero_doesnt_break_zscore
-- test_dropna_in_training_doesnt_kill_all_rows_when_sentiment_missing
-
-Toplam test: 33/33 (önceki 27 + 6 yeni).
-
-TODO (Faz 5):
-- Next-day open execution full simülasyon (OHLC ile)
-- Point-in-time BIST 100 membership (survivorship FIX, sadece disclose değil)
-- Sentiment data biriktirme (cron çalışınca otomatik)
+Tests: 33/33 geçti.
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
