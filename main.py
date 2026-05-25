@@ -50,7 +50,10 @@ def cmd_score() -> None:
 
 
 def cmd_predict() -> None:
-    logger.warning("predict: Faz 3'te eklenecek (model + shortlist)")
+    from strategy.shortlist import generate_shortlist
+    from reports.console import print_shortlist
+    items = generate_shortlist()
+    print_shortlist(items)
 
 
 def cmd_backtest() -> None:

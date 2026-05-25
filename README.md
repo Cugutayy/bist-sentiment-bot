@@ -50,16 +50,36 @@ cp .env.example .env        # ANTHROPIC_API_KEY doldur
 ## Kullanım
 
 ```bash
-# Veri toplama (cron: her gün 18:30)
-python -m ingestion.price_collector
-python -m ingestion.news_collector
-python -m ingestion.kap_collector       # Faz 1B, henüz aktif değil
+# 1) Veri toplama
+python main.py ingest          # price + news, tek seferde
 
-# Sentiment skorlama (cron: her saat)
-python -m nlp.sentiment_claude
+# 2) Backtest (model artifact üretir — predict için gerekli)
+python main.py backtest        # 5y veride 6 fold walk-forward
 
-# Günlük shortlist üretimi (cron: her gün 19:00)
-python main.py predict --date today
+# 3) Günlük shortlist (model artifact'ın bulunması gerekiyor)
+python main.py predict         # bugün için top-N + neden
+
+# 4) Sentiment skorlama (ANTHROPIC_API_KEY varsa)
+python main.py score           # günün haberlerini Claude ile skorla
+
+# Veri kalitesi denetimi
+python scripts/audit_prices.py
+```
+
+### Cron Önerisi (Windows Task Scheduler veya Linux crontab)
+
+```cron
+# Hergün 18:30 — veri topla
+30 18 * * 1-5  python /path/bist-sentiment-bot/main.py ingest
+
+# Hergün 19:00 — sentiment skorla
+0  19 * * 1-5  python /path/bist-sentiment-bot/main.py score
+
+# Pazar 20:00 — modeli haftalık yeniden eğit (backtest model artifact üretir)
+0  20 * * 0    python /path/bist-sentiment-bot/main.py backtest
+
+# Hergün 19:15 — shortlist üret
+15 19 * * 1-5  python /path/bist-sentiment-bot/main.py predict
 ```
 
 ## Bilinen yfinance / BIST Sorunları (UNUTMA)
@@ -109,11 +129,29 @@ python scripts/probe_feeds.py
 
 ## Yol Haritası
 
-- **Faz 1A** — Repo + price + 7-feed news + Claude sentiment + backtest iskeleti ✅
-- **Faz 1B** — Feed sağlık check scripti · (opsiyonel) Reddit ingestion
-- **Faz 2**  — Feature engineering + LightGBM training + walk-forward backtest
-- **Faz 3**  — Shortlist üretimi + günlük email/telegram push
-- **Faz 4**  — Canlı izleme (4-8 hafta), performans loglama
+- **Faz 1A** ✅ Repo + price + 7-feed news + Claude sentiment + backtest iskeleti
+- **Faz 1B** ✅ KAP → 7 RSS feed alternatifi (devlet sitesi scraping iptal)
+- **Faz 2**  ✅ 14 feature + LightGBM + purged walk-forward + realistic cost model
+- **Faz 3**  ✅ `strategy/shortlist.py` + `reports/console.py` + `main.py predict`
+- **Faz 4**  🔄 Cron setup ✅ · sentiment integration ⏳ · Telegram push ⏳ · live performans tracking ⏳
+
+## Mevcut Backtest Sonuçları (BIST 30, 5 yıl, 6 fold walk-forward)
+
+| Metrik | Portföy | XU100 BH (aynı dönem) |
+|---|---|---|
+| Sharpe | **+0.17** | -0.82 |
+| CAGR | +2.2% | +9.0% |
+| Max DD | -37.6% | -11.3% |
+| Hit rate | 48.8% | 49.4% |
+| Turnover (günlük) | **2.4%** | — |
+| n_days | 82 | 82 |
+
+**Honest yorum:**
+- Strateji XU100'ün negatif olduğu test günlerinde pozitif Sharpe üretti.
+- CAGR düşük çünkü XU100 trend dönemleri test'in dışında kaldı.
+- Max DD -37% yüksek — concentration riski (top-10 long, sektör cap yok).
+- **Sentiment data yok** — fiyat-only baseline. Sentiment ekledikçe iyileşmesi beklenir.
+- Turnover %94 → %2.4 (haftalık rebalance + sinyal EMA smoothing).
 
 ## Lisans
 

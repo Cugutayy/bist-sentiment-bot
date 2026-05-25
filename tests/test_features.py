@@ -59,16 +59,24 @@ def test_no_lookahead_features_use_only_past():
 
 
 def test_lag_shifts_by_one_day():
-    """lag=True iken t günündeki feature t-1 close'tan türemiş olmalı."""
+    """lag=True iken t günündeki feature t-1 close'tan türemiş olmalı.
+
+    no_lag ret_5: ilk 5 gün NaN → 45 değer
+    lagged ret_5: shift(1) sonrası ilk 6 gün NaN → 44 değer
+    Mantık: lagged[t] == no_lag[t-1], dolayısıyla:
+      lagged.dropna()  ==  no_lag.iloc[:-1].dropna()
+    """
     panel = _synthetic_panel(n_days=50, n_tickers=1)
     no_lag = build_features(panel, lag=False)
     lagged = build_features(panel, lag=True)
 
-    # ret_5 hesabı: lag=False iken t günü, lag=True iken t-1 gün
-    nl = no_lag["ret_5"].dropna().reset_index(drop=True)
-    l = lagged["ret_5"].dropna().reset_index(drop=True)
-    # Lagged seri, no-lag serinin bir gün gecikmişi olmalı
-    assert (nl[:-1].values - l[1:].values).abs().max() < 1e-9
+    nl_vals = no_lag["ret_5"].dropna().values
+    l_vals = lagged["ret_5"].dropna().values
+    # Lagged 1 değer az olmalı (extra shift NaN)
+    assert len(nl_vals) == len(l_vals) + 1, \
+        f"Lag shift wrong: no_lag={len(nl_vals)}, lagged={len(l_vals)}"
+    # Lagged değerler no_lag'in son satırı hariç olan kısmına eşit olmalı
+    assert (nl_vals[:-1] - l_vals).max() < 1e-9
 
 
 def test_return_function():

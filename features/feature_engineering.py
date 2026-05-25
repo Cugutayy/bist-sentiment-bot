@@ -87,22 +87,29 @@ def build_features(panel: pd.DataFrame, lag: bool = True) -> pd.DataFrame:
         panel + feature kolonları, long format.
     """
     cfg = SETTINGS["features"]
-    out = panel.copy().sort_values(["ticker", "date"])
+    out = panel.copy().sort_values(["ticker", "date"]).reset_index(drop=True)
 
     # Her ticker için zaman serisi feature'ları
-    groups = out.groupby("ticker", group_keys=False)
+    # pandas 3.0 uyumluluğu: tek ticker'da groups.apply DataFrame döner,
+    # bu yüzden her feature için ayrı transform/iterate.
+    grouped = out.groupby("ticker", group_keys=False, sort=False)
 
     for w in cfg["return_windows"]:
-        out[f"ret_{w}"] = groups["close"].apply(lambda s: f_return(s, w))
+        out[f"ret_{w}"] = grouped["close"].transform(lambda s: f_return(s, w))
 
-    out["vol_20"] = groups["close"].apply(lambda s: f_volatility(s, cfg["vol_window"]))
-    out["momentum_60"] = groups["close"].apply(lambda s: f_momentum(s, cfg["momentum_window"]))
-    out["rsi_14"] = groups["close"].apply(lambda s: f_rsi(s, cfg["rsi_window"]))
-    out["volume_z"] = groups["volume"].apply(lambda s: f_volume_zscore(s))
+    out["vol_20"] = grouped["close"].transform(lambda s: f_volatility(s, cfg["vol_window"]))
+    out["momentum_60"] = grouped["close"].transform(lambda s: f_momentum(s, cfg["momentum_window"]))
+    out["rsi_14"] = grouped["close"].transform(lambda s: f_rsi(s, cfg["rsi_window"]))
+    out["volume_z"] = grouped["volume"].transform(lambda s: f_volume_zscore(s))
 
-    out["rel_strength_20"] = groups.apply(
-        lambda g: f_relative_strength(g["close"], g["benchmark_close"], 20)
-    ).reset_index(level=0, drop=True)
+    # rel_strength iki kolon kullanıyor — transform tek seri lazım,
+    # bu yüzden ticker-ticker hesaplayıp birleştir.
+    rs_chunks = []
+    for ticker, g in grouped:
+        rs = f_relative_strength(g["close"], g["benchmark_close"], 20)
+        rs.index = g.index
+        rs_chunks.append(rs)
+    out["rel_strength_20"] = pd.concat(rs_chunks).sort_index()
 
     # Cross-sectional z-score'lar (rank-equivalent normalize)
     for col in ["ret_5", "ret_20", "momentum_60", "rsi_14", "volume_z", "rel_strength_20"]:
@@ -114,7 +121,7 @@ def build_features(panel: pd.DataFrame, lag: bool = True) -> pd.DataFrame:
 
     if lag:
         # Look-ahead defansı: t günü için sadece t-1 verisi
-        out[feature_cols] = groups[feature_cols].shift(1)
+        out[feature_cols] = grouped[feature_cols].shift(1)
 
     logger.info(f"Features built: {len(feature_cols)} kolon, {len(out):,} satır")
     return out

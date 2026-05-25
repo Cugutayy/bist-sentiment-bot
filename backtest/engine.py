@@ -28,7 +28,7 @@ from backtest.walk_forward import WalkForwardSplit, make_splits, slice_panel
 from config import SETTINGS
 from features.feature_engineering import build_features
 from features.loader import load_panel
-from models.train import build_training_set, predict_fold, train_fold
+from models.train import build_training_set, make_run_id, predict_fold, save_model, train_fold
 
 
 @dataclass
@@ -41,22 +41,49 @@ class BacktestResult:
     benchmark_metrics: dict
 
 
-def _build_positions(signals: pd.DataFrame, top_n: int, max_pos: float) -> pd.DataFrame:
-    """Sinyallerden günlük long-only equal-weight pozisyon ağırlıkları üret.
+def _build_positions(
+    signals: pd.DataFrame,
+    top_n: int,
+    max_pos: float,
+    rebalance_freq: int = 1,
+    smooth_window: int = 1,
+) -> pd.DataFrame:
+    """Sinyallerden long-only equal-weight pozisyon ağırlıkları üret.
+
+    Turnover azaltma:
+    - smooth_window: sinyal EMA ile yumuşatılır (volatil sinyal sıçramaları azalır)
+    - rebalance_freq: top-N seçimi sadece rebalance günlerinde yapılır,
+      arada portföy değişmez (haftalık = 5).
 
     signals: date | ticker | signal (0..1)
     Çıktı: date × ticker pivot, değerler ağırlıklar (sum ≤ 1).
     """
     if signals.empty:
         return pd.DataFrame()
-    s = signals.copy()
-    # Her gün top-N en yüksek sinyal
-    s["rank"] = s.groupby("date")["signal"].rank(ascending=False, method="first")
-    s = s[s["rank"] <= top_n]
-    n_per_day = s.groupby("date").size()
-    s = s.merge(n_per_day.rename("n_picked"), left_on="date", right_index=True)
-    s["weight"] = (1.0 / s["n_picked"]).clip(upper=max_pos)
-    pivot = s.pivot(index="date", columns="ticker", values="weight").fillna(0)
+    s = signals.copy().sort_values(["ticker", "date"])
+
+    # Sinyal smoothing (ticker bazlı EMA)
+    if smooth_window > 1:
+        s["signal"] = s.groupby("ticker")["signal"].transform(
+            lambda x: x.ewm(span=smooth_window, adjust=False).mean()
+        )
+
+    # Rebalance günlerini belirle: ilk gün + her N işlem günü
+    all_dates = sorted(s["date"].unique())
+    rebalance_dates = set(all_dates[::rebalance_freq])
+
+    # Sadece rebalance günlerinde top-N seç
+    rb = s[s["date"].isin(rebalance_dates)].copy()
+    rb["rank"] = rb.groupby("date")["signal"].rank(ascending=False, method="first")
+    rb = rb[rb["rank"] <= top_n]
+    n_per_day = rb.groupby("date").size()
+    rb = rb.merge(n_per_day.rename("n_picked"), left_on="date", right_index=True)
+    rb["weight"] = (1.0 / rb["n_picked"]).clip(upper=max_pos)
+
+    pivot = rb.pivot(index="date", columns="ticker", values="weight")
+    # Rebalance günleri arasındaki günler: önceki ağırlıkları taşı (forward fill)
+    full_index = pd.DatetimeIndex(all_dates)
+    pivot = pivot.reindex(full_index).ffill().fillna(0)
     return pivot
 
 
@@ -108,6 +135,8 @@ def run_backtest(
     """Tam pipeline — panel → features → walk-forward → backtest."""
     top_n = top_n or SETTINGS["strategy"]["top_n"]
     max_pos = SETTINGS["strategy"]["max_position_pct"]
+    rebalance_freq = SETTINGS["strategy"].get("rebalance_freq_days", 1)
+    smooth_window = SETTINGS["strategy"].get("signal_smooth_window", 1)
 
     logger.info("Backtest başlıyor...")
     panel = load_panel(start=start, end=end)
@@ -122,6 +151,7 @@ def run_backtest(
 
     all_signals: list[pd.DataFrame] = []
     fold_metrics: list[dict] = []
+    run_id = make_run_id()
 
     for i, split in enumerate(splits):
         train = train_df_all[(train_df_all["date"] >= split.train_start) &
@@ -138,6 +168,7 @@ def run_backtest(
             continue
         sig = predict_fold(tm, test)
         all_signals.append(sig)
+        save_model(tm, run_id, i)   # her fold için artifact diske yaz
         fold_metrics.append({
             "fold": i,
             "train_n": len(train),
@@ -153,7 +184,13 @@ def run_backtest(
         raise RuntimeError("Hiç başarılı fold yok")
 
     signals_concat = pd.concat(all_signals, ignore_index=True)
-    weights = _build_positions(signals_concat, top_n=top_n, max_pos=max_pos)
+    weights = _build_positions(
+        signals_concat,
+        top_n=top_n,
+        max_pos=max_pos,
+        rebalance_freq=rebalance_freq,
+        smooth_window=smooth_window,
+    )
 
     # Net günlük getiri (panel: orijinal price panel, NOT features)
     net = _daily_pnl(weights, panel, cost)

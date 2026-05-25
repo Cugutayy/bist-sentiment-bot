@@ -110,10 +110,13 @@ costs:
 
 # Strateji
 strategy:
-  top_n: 10                          # her gün top-N long
+  top_n: 10                          # top-N long
   max_position_pct: 0.10             # tek hisseye max %10
-  min_liquidity_tl: 50000000         # günlük >50M TL hacim
-  sector_max_pct: 0.30               # sektör başına max %30
+  min_liquidity_tl: 50000000         # günlük >50M TL hacim (Faz 3'te uygulanacak)
+  sector_max_pct: 0.30               # sektör başına max %30 (Faz 3'te)
+  # Turnover azaltma:
+  rebalance_freq_days: 5             # her 5 işlem gününde 1 yeniden seç (haftalık)
+  signal_smooth_window: 5            # sinyal EMA span (smoothing)
 
 # Risk yönetimi (sinyal seviyesinde)
 risk:

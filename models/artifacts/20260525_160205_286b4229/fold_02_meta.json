@@ -1,0 +1,31 @@
+{
+  "fold_idx": 2,
+  "train_start": "2023-03-06",
+  "train_end": "2023-11-07",
+  "n_train_samples": 5100,
+  "n_features": 14,
+  "feature_cols": [
+    "ret_5",
+    "ret_10",
+    "ret_20",
+    "vol_20",
+    "momentum_60",
+    "rsi_14",
+    "volume_z",
+    "rel_strength_20",
+    "cs_ret_5",
+    "cs_ret_20",
+    "cs_momentum_60",
+    "cs_rsi_14",
+    "cs_volume_z",
+    "cs_rel_strength_20"
+  ],
+  "params": {
+    "n_estimators": 400,
+    "learning_rate": 0.03,
+    "max_depth": 6,
+    "num_leaves": 31,
+    "min_child_samples": 20,
+    "random_state": 42
+  }
+}
