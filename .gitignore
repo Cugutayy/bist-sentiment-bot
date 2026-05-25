@@ -9,11 +9,13 @@ venv/
 htmlcov/
 
 # Veri (ham veri büyük, kullanıcı kendisi indirir)
-data/raw/*.parquet
-data/processed/*.parquet
-data/raw/*.csv
-data/processed/*.csv
+# Recursive — alt klasörlerdeki tüm parquet/csv'ler ignore.
+data/raw/
+data/processed/
 data/cache/
+# Sadece .gitkeep istisna (klasör yapısı korunur):
+!data/raw/.gitkeep
+!data/processed/.gitkeep
 
 # Modeller
 models/*.joblib
