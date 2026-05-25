@@ -82,6 +82,37 @@ python scripts/audit_prices.py
 15 19 * * 1-5  python /path/bist-sentiment-bot/main.py predict
 ```
 
+## Sentiment Integration — Tek-Haber Dominasyonu Önleme
+
+**Sorun:** Tek bir aşırı pozitif/negatif haber portföyü domine etmemeli;
+piyasa zaten sentiment'i hızlıca fiyatlıyor (overreaction → mean-reversion).
+
+**Çözüm — Literatür tabanlı 6 katmanlı koruma**
+
+(Referanslar: [Kirtaç & Germano 2024](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4706629),
+[MANA-Net 2024](https://arxiv.org/html/2409.05698v1),
+[Interpretable ML for Macro Alpha 2025](https://arxiv.org/pdf/2505.16136))
+
+| Koruma | Nerede |
+|---|---|
+| **Winsorization** ±%95 quantile clip | `sentiment_aggregator._winsorize_series` |
+| **Confidence weighting** (Claude'un güveni) | `weight = ... × confidence` |
+| **Relevance weighting** (hisseyle ilgi) | `weight = ... × relevance` |
+| **Source credibility** (KAP > Reuters > genel) | `settings.yaml` source_credibility tablosu |
+| **Exponential decay** half-life 5 gün | `_decay_weight(age, half_life)` |
+| **Surprise feature** (sentiment − rolling_30d) | `feature_engineering._add_sentiment_features` |
+
+**Feature çıktısı** (model girişine 8 sentiment feature):
+- `sent_w_3d`, `sent_w_7d`, `sent_w_14d` — ağırlıklı rolling mean (multi-horizon)
+- `sent_surprise` = today − rolling_30d (mean reversion baseline'dan sapma)
+- `sent_momentum` = EMA(7) − EMA(30) (trend yakalama)
+- `sent_news_count_7d` — son hafta haber sayısı
+- `sent_news_surge` = bugün / 30d ortalama (anormal aktivite)
+- `sent_std_7d` — sentiment uzlaşmazlığı (yüksek = belirsiz)
+
+**Graceful fallback**: sentiment data yoksa tüm sent_* feature'lar 0,
+model fiyat-only baseline'a düşer (her zaman çalışır).
+
 ## Bilinen yfinance / BIST Sorunları (UNUTMA)
 
 Yahoo Finance, BIST verisi için **resmi/garanti** kaynak değil; unofficial

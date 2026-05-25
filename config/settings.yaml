@@ -70,6 +70,26 @@ nlp:
   cache_dir: data/cache/sentiment    # content-hash cache
   batch_size: 20                     # tek istekte kaç haber
 
+  # Sentiment aggregation (literatür: Kirtaç 2024, MANA-Net 2024, arXiv 2505.16136)
+  # Tek-haber dominasyonu önleme: winsorize + decay + confidence × credibility
+  aggregation:
+    decay_half_life_days: 5          # half-life, exponential decay (recency)
+    winsorize_pct: 0.05              # ±2σ ~ %95 quantile clip
+    surprise_window_days: 30         # rolling mean for surprise feature
+    min_news_for_signal: 1           # alt eşik (yetersiz veri → 0)
+    # Kaynak kredibilite ağırlığı (0..1) — KAP > resmi gazete > popüler > genel
+    source_credibility:
+      "KAP":                 1.00    # gelecekte eklenecek
+      "BloombergHT":         0.90
+      "Reuters TR":          0.90
+      "AA Ekonomi":          0.85
+      "Dünya":               0.85
+      "Hürriyet Ekonomi":    0.75
+      "Sabah Ekonomi":       0.70
+      "Habertürk Ekonomi":   0.75
+      "Yeni Şafak Ekonomi":  0.65
+      "_default":            0.60    # bilinmeyen kaynak
+
 # Feature engineering — hepsi t-1 lagged
 features:
   return_windows: [5, 10, 20]

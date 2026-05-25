@@ -49,6 +49,12 @@ def cmd_score() -> None:
     logger.info(f"Sentiment yazıldı → {out.name}")
 
 
+def cmd_aggregate() -> None:
+    from nlp.sentiment_aggregator import aggregate
+    df = aggregate()
+    logger.info(f"Sentiment aggregator: {len(df)} ticker-gün")
+
+
 def cmd_predict() -> None:
     from strategy.shortlist import generate_shortlist
     from reports.console import print_shortlist
@@ -69,12 +75,13 @@ def cmd_backtest() -> None:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("cmd", choices=["ingest", "score", "predict", "backtest"])
+    p.add_argument("cmd", choices=["ingest", "score", "aggregate", "predict", "backtest"])
     args = p.parse_args()
 
     cmds = {
         "ingest": cmd_ingest,
         "score": cmd_score,
+        "aggregate": cmd_aggregate,
         "predict": cmd_predict,
         "backtest": cmd_backtest,
     }

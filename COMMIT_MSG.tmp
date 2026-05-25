@@ -1,60 +1,56 @@
-fix: 4 kritik bug — PnL 1-gün shift, fold sınırı ffill, deprecated utcnow
+feat(faz4): sentiment integration — literatür tabanlı 6 katmanlı koruma
 
-Bug 1: PnL alignment hatası (KRİTİK)
--------------------------------------
-backtest/engine._daily_pnl önceki haliyle weights[t] × rets[t]
-hesaplıyordu = "bugünkü karar × dünden bugüne getiri" (geriye dönük!).
+Tek-haber dominasyonu önleme (overreaction problem):
+"Salient news triggers immediate overreactions ... mean-reversion patterns
+erode multi-period predictive value" (arXiv 2505.16136)
 
-Doğru alignment:
-- Model target: row i = "close[i]'da al, close[i+1..i+N] gözle"
-- Feature lag=True: row i için close[..., i-1] bilgisi
-- weights[t] = "t günü close'da girilecek pozisyon kararı"
-- Earn edilen return: close[t]→close[t+1] = rets[t+1]
-- PnL: weights[t] × rets[t+1] (1-gün ileri shift)
+Yeni modül: nlp/sentiment_aggregator.py
+-----------------------------------------
+Skorlanmış haberler (data/processed/sentiment_*.parquet) →
+ticker × tarih bazlı ağırlıklı agregasyon (sentiment_daily.parquet).
 
-Yeni _daily_pnl: her weights[d] için bir sonraki panel günü (d+1)
-realisation günü olarak alınır, weights[d] × rets[d+1] hesaplanır.
-Turnover cost'u da entry günü realisation'ında uygulanır.
+6 katmanlı koruma:
+1) Winsorization: ±%95 quantile clip (extreme tek-haber sentiment)
+2) Confidence weighting: Claude'un güven skoru çarpan
+3) Relevance weighting: hisseyle ilgi düşükse az ağırlık
+4) Source credibility: KAP > Reuters > genel haber > sosyal (settings.yaml)
+5) Time decay: exp(-age_days / 5) — half-life 5 gün
+6) min_news threshold: tek haberle güçlü sinyal verme
 
-Bug 2: Fold sınırı pozisyon ffill bug
--------------------------------------
-Walk-forward fold'ları arası 8-9 ay boşluk var (purge+embargo).
-Önceki _build_positions tüm signals'ı tek seri kabul edip ffill
-yapıyordu — fold0 son ağırlığı fold1 ilk gününe taşınıyordu
-(sanki 9 ay boyunca pozisyon tutulmuş gibi).
+Formula:
+  weight[h] = source_cred[s] × relevance[h] × confidence[h] × decay[age]
+  sentiment_daily[t,i] = Σ(weight × sentiment) / Σ(weight)
 
-Düzeltme: gap_threshold = max(rebalance_freq×3, 14) gün eşiği ile
-fold başlangıçları tespit edilir; her fold içinde ayrı rebalance +
-ayrı ffill, fold sınırlarında pozisyon SIFIRLANIR.
+8 yeni sentiment feature (features/feature_engineering.py)
+----------------------------------------------------------
+- sent_w_3d / 7d / 14d: ağırlıklı rolling mean (multi-horizon)
+- sent_surprise: today − rolling_30d (mean reversion baseline)
+- sent_momentum: EMA(7) − EMA(30) (trend)
+- sent_news_count_7d: haber sayısı
+- sent_news_surge: today / 30d_avg (anormal aktivite)
+- sent_std_7d: uzlaşmazlık
 
-Bug 3: 7 yerde datetime.utcnow() deprecated
--------------------------------------------
-Python 3.12+ utcnow() deprecated → datetime.now(UTC) yapıldı.
-Dosyalar: price_collector, news_collector, train, main.
-news_collector için _utcnow() helper eklendi (parquet için
-tz-naive zorunlu).
+Graceful fallback: sentiment_daily.parquet yoksa veya boşsa, tüm
+sent_* feature'lar 0 ile dolar → model fiyat-only baseline'a düşer.
+Backtest her durumda çalışır.
 
-Bug 4: pd.Timestamp.utcnow() deprecated (3 yer)
------------------------------------------------
-pd.Timestamp.now(tz="UTC").tz_localize(None) yapıldı.
-Dosyalar: data_quality, paper_trading (2 yer).
+Bug fix: feature_engineering build_features içinde sentiment merge
+sonrası 'grouped' referansı bayatlıyordu; out.groupby ile yenilendi.
 
-Sonuçlar
---------
-Düzeltilmiş backtest (BIST 30, 5y, 6 fold, 82 test günü):
+main.py yeni komut: aggregate
 
-ÖNCE (buglu)          SONRA (düzeltilmiş)
-Sharpe   +0.17        Sharpe   +1.15   (XU100 BH: +0.40)
-CAGR     +2.2%        CAGR    +135.4%  (XU100 BH: +60.3% — TR enflasyon)
-Max DD   -37.6%       Max DD   -14.8%  (XU100 BH: -10.0%)
-Turnover  2.4%        Turnover  15%    (rebalance pattern fold-aware)
+Settings:
+- nlp.aggregation: decay_half_life_days=5, winsorize_pct=0.05
+- source_credibility tablosu (8 kaynak + default)
 
-HONEST: 82 test günü için Sharpe standard error ~±0.5.
-Yani "gerçek" Sharpe muhtemelen 0.6-1.7 aralığında.
-Kesin alpha kanıtı için 200+ test günü gerekli; paper trading
-log birikince live Sharpe ile cross-check yapılacak.
+Test sonuçları:
+- 27/27 test geçti
+- Backtest: 14 → 22 feature, Sharpe +1.15 (sentiment data eksik
+  olduğu için hala fiyat-only, gerçek sentiment biriktikçe değişir)
 
-27/27 test geçiyor (3 parity testi dahil).
-0 deprecation warning.
+Sentiment data biriktirme:
+- Cron her gün ingest + score çalıştığında news birikir
+- Aggregate haftalık ya da günlük çalıştırılır
+- 1-2 ay sonra anlamlı feature için yeterli data oluşur
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

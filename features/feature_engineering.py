@@ -14,7 +14,9 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from config import SETTINGS
+from config import ROOT, SETTINGS
+
+SENTIMENT_DAILY = ROOT / "data" / "processed" / "sentiment_daily.parquet"
 
 
 # ─── Tekil feature fonksiyonları (ticker bazlı, time-series) ────────
@@ -115,13 +117,18 @@ def build_features(panel: pd.DataFrame, lag: bool = True) -> pd.DataFrame:
     for col in ["ret_5", "ret_20", "momentum_60", "rsi_14", "volume_z", "rel_strength_20"]:
         out[f"cs_{col}"] = cs_zscore(out, col)
 
+    # Sentiment feature'ları (graceful: data yoksa hepsi 0)
+    out = _add_sentiment_features(out)
+
     feature_cols = [c for c in out.columns
                     if c.startswith(("ret_", "vol_", "momentum_", "rsi_",
-                                     "volume_z", "rel_strength_", "cs_"))]
+                                     "volume_z", "rel_strength_", "cs_",
+                                     "sent_"))]
 
     if lag:
-        # Look-ahead defansı: t günü için sadece t-1 verisi
-        out[feature_cols] = grouped[feature_cols].shift(1)
+        # Look-ahead defansı: t günü için sadece t-1 verisi.
+        # grouped referansı sentiment merge sonrası bayatladı, yeniden groupby.
+        out[feature_cols] = out.groupby("ticker", group_keys=False, sort=False)[feature_cols].shift(1)
 
     logger.info(f"Features built: {len(feature_cols)} kolon, {len(out):,} satır")
     return out
@@ -131,4 +138,71 @@ def feature_columns(panel_with_features: pd.DataFrame) -> list[str]:
     """Feature kolonlarını otomatik tespit et (model.fit için)."""
     return [c for c in panel_with_features.columns
             if c.startswith(("ret_", "vol_", "momentum_", "rsi_",
-                             "volume_z", "rel_strength_", "cs_"))]
+                             "volume_z", "rel_strength_", "cs_",
+                             "sent_"))]
+
+
+# ─── Sentiment Features ─────────────────────────────────────────────
+
+def _add_sentiment_features(panel: pd.DataFrame) -> pd.DataFrame:
+    """Sentiment_daily.parquet'ten ticker × date sentiment feature'ları ekle.
+
+    Eklenen feature'lar (literatür: surprise + momentum + volume):
+    - sent_w_3d, sent_w_7d, sent_w_14d : ağırlıklı sentiment rolling mean
+    - sent_surprise : today - rolling_mean_30d
+    - sent_momentum : ema(7) - ema(30)
+    - sent_news_count_7d : son 7 günde haber sayısı
+    - sent_news_surge : news_count / news_count_30d_avg
+    - sent_std_7d : son 7 günde sentiment dispersion (uzlaşmazlık)
+
+    Dosya yoksa veya boşsa: tüm sent_* kolonlar 0 ile doldurulur (graceful).
+    """
+    sent_cols = [
+        "sent_w_3d", "sent_w_7d", "sent_w_14d",
+        "sent_surprise", "sent_momentum",
+        "sent_news_count_7d", "sent_news_surge", "sent_std_7d",
+    ]
+
+    if not SENTIMENT_DAILY.exists():
+        logger.info("Sentiment data yok → sentiment feature'lar 0 ile dolduruluyor")
+        for c in sent_cols:
+            panel[c] = 0.0
+        return panel
+
+    sent = pd.read_parquet(SENTIMENT_DAILY)
+    if sent.empty:
+        logger.info("Sentiment data boş → sentiment feature'lar 0 ile dolduruluyor")
+        for c in sent_cols:
+            panel[c] = 0.0
+        return panel
+
+    sent["date"] = pd.to_datetime(sent["date"])
+
+    # Ticker bazında rolling hesaplar — long format
+    sent = sent.sort_values(["ticker", "date"])
+    g = sent.groupby("ticker", group_keys=False)
+
+    sent["sent_w_3d"]   = g["sentiment_w"].transform(lambda s: s.rolling(3,  min_periods=1).mean())
+    sent["sent_w_7d"]   = g["sentiment_w"].transform(lambda s: s.rolling(7,  min_periods=1).mean())
+    sent["sent_w_14d"]  = g["sentiment_w"].transform(lambda s: s.rolling(14, min_periods=1).mean())
+    sent["sent_w_30d"]  = g["sentiment_w"].transform(lambda s: s.rolling(30, min_periods=1).mean())
+    sent["sent_surprise"] = sent["sentiment_w"] - sent["sent_w_30d"]
+
+    ema7  = g["sentiment_w"].transform(lambda s: s.ewm(span=7,  adjust=False).mean())
+    ema30 = g["sentiment_w"].transform(lambda s: s.ewm(span=30, adjust=False).mean())
+    sent["sent_momentum"] = ema7 - ema30
+
+    sent["sent_news_count_7d"] = g["news_count"].transform(lambda s: s.rolling(7, min_periods=1).sum())
+    nc30 = g["news_count"].transform(lambda s: s.rolling(30, min_periods=1).mean())
+    sent["sent_news_surge"] = (sent["news_count"] / nc30.replace(0, np.nan)).fillna(1.0).clip(0, 10)
+    sent["sent_std_7d"] = g["sentiment_std"].transform(lambda s: s.rolling(7, min_periods=1).mean())
+
+    # Panel'e merge — ticker × date, sentiment olmayan satırlar 0 ile dolar
+    sent_keep = sent[["date", "ticker"] + sent_cols]
+    panel = panel.merge(sent_keep, on=["date", "ticker"], how="left")
+    for c in sent_cols:
+        panel[c] = panel[c].fillna(0.0)
+
+    matched = int((panel[sent_cols[0]] != 0).sum())
+    logger.info(f"Sentiment merged: {matched}/{len(panel)} satırda non-zero sentiment")
+    return panel
