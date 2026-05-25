@@ -52,8 +52,13 @@ def cmd_score() -> None:
 def cmd_predict() -> None:
     from strategy.shortlist import generate_shortlist
     from reports.console import print_shortlist
+    from reports.paper_trading import log_predictions, score_outcomes, summary
     items = generate_shortlist()
     print_shortlist(items)
+    # Paper trading: predictions log + geçmişlerin outcome'larını skorla
+    log_predictions(items)
+    score_outcomes()
+    print("Paper trading özet:", summary())
 
 
 def cmd_backtest() -> None:

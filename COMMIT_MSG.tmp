@@ -1,0 +1,45 @@
+feat: backtest↔live parity testleri + paper trading log + honest gap analizi
+
+Kullanıcı uyarısı: "backtestte kar var ama canlıda farklıysa backtest
+yalan". Bu commit ile bu disipline operasyonel hâl verildi.
+
+3 yeni parity testi (tests/test_backtest_live_parity.py)
+--------------------------------------------------------
+- test_backtest_and_live_features_match_for_same_date:
+  Aynı t günü için backtest (full panel) ve live (cutoff'a kadar
+  panel) build_features(lag=True) AYNI değer vermeli — yoksa
+  feature fonksiyonunda lookahead var.
+- test_cross_sectional_features_use_only_current_universe:
+  cs_z-score'lar live'da da tutarlı, çünkü date bazında groupby ile
+  hesaplanıyor (full panel görmüyor).
+- test_no_future_data_affects_past_features:
+  Gelecek günler eklenince geçmiş feature değişmemeli.
+
+3/3 geçti — backtest matematiksel olarak temiz.
+
+Paper trading log (reports/paper_trading.py)
+--------------------------------------------
+- log_predictions(items): her predict çağrısı shortlist'i
+  paper_trades.parquet'a append eder (prediction_date, ticker, rank,
+  score, entry_price).
+- score_outcomes(): geçmiş predictions için 5/10/20 gün sonrasının
+  gerçek return'ünü Yahoo verisinden hesaplar.
+- summary(): paper Sharpe karşılaştırma için temel istatistik.
+- main.py predict her çalıştığında: hem print_shortlist + hem
+  log_predictions + score_outcomes (idempotent — aynı gün üst üste
+  yazılırsa eskisini siler).
+
+Cron çalıştırıldıkça 1-2 hafta sonra:
+  paper Sharpe == backtest Sharpe ?  → model sağlam
+  drift varsa → kök analiz (cost model? execution timing? data drift?)
+
+27 test toplam, hepsi geçiyor.
+
+Hala eksikler (sonraki turn'lerde):
+- Point-in-time BIST 100 membership (survivorship bias)
+- Execution timing: close yerine next-day open simülasyonu
+- Sentiment feature integration (data biriksin önce)
+- Sektör cap, likidite gate
+- Cross-source price validation
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
