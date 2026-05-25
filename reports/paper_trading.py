@@ -32,7 +32,7 @@ def log_predictions(items: list[ShortlistItem], as_of: pd.Timestamp | None = Non
     Her kayıt: prediction_date, ticker, rank, score, entry_price.
     Outcome alanları (5d_ret, 10d_ret, 20d_ret) sonradan doldurulur.
     """
-    as_of = as_of or pd.Timestamp.utcnow().normalize().tz_localize(None)
+    as_of = as_of or pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
     rows = [{
         "prediction_date": as_of,
         "ticker": it.ticker,
@@ -69,7 +69,7 @@ def score_outcomes(as_of: pd.Timestamp | None = None) -> pd.DataFrame:
         logger.warning("Henüz paper trade yok")
         return pd.DataFrame()
     df = pd.read_parquet(PAPER_LOG)
-    as_of = as_of or pd.Timestamp.utcnow().normalize().tz_localize(None)
+    as_of = as_of or pd.Timestamp.now(tz="UTC").tz_localize(None).normalize()
 
     # Hangi prediction'lar henüz scoring bekliyor?
     for horizon_days, col in [(5, "ret_5d"), (10, "ret_10d"), (20, "ret_20d")]:

@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -120,6 +120,6 @@ def save_model(tm: TrainedModel, run_id: str, fold_idx: int) -> Path:
 
 
 def make_run_id() -> str:
-    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     cfg_hash = hashlib.sha256(json.dumps(SETTINGS["model"], sort_keys=True).encode()).hexdigest()[:8]
     return f"{ts}_{cfg_hash}"

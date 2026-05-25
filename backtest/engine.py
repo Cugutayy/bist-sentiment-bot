@@ -51,12 +51,15 @@ def _build_positions(
     """Sinyallerden long-only equal-weight pozisyon ağırlıkları üret.
 
     Turnover azaltma:
-    - smooth_window: sinyal EMA ile yumuşatılır (volatil sinyal sıçramaları azalır)
-    - rebalance_freq: top-N seçimi sadece rebalance günlerinde yapılır,
-      arada portföy değişmez (haftalık = 5).
+    - smooth_window: sinyal ticker BAZLI EMA ile yumuşatılır
+    - rebalance_freq: top-N seçimi sadece rebalance günlerinde, arada ffill
+
+    Fold sınırı düzeltmesi: fold lar arası (uzun) tarih boşluklarında
+    eski pozisyonlar TAŞINMAZ. Her fold'un ilk günü zorla rebalance.
+    Boşluk eşiği = rebalance_freq × 3 gün (örn. 5 freq için 15 gün).
 
     signals: date | ticker | signal (0..1)
-    Çıktı: date × ticker pivot, değerler ağırlıklar (sum ≤ 1).
+    Çıktı: date × ticker pivot, değerler ağırlıklar.
     """
     if signals.empty:
         return pd.DataFrame()
@@ -68,9 +71,28 @@ def _build_positions(
             lambda x: x.ewm(span=smooth_window, adjust=False).mean()
         )
 
-    # Rebalance günlerini belirle: ilk gün + her N işlem günü
     all_dates = sorted(s["date"].unique())
-    rebalance_dates = set(all_dates[::rebalance_freq])
+
+    # Fold sınırı tespiti: ardışık tarihler arasında çok gün varsa
+    # (>3× rebalance_freq), orada yeni fold başlamış say → ilk gün rebalance.
+    gap_threshold = pd.Timedelta(days=max(rebalance_freq * 3, 14))
+    fold_starts = [all_dates[0]]
+    for i in range(1, len(all_dates)):
+        if (all_dates[i] - all_dates[i - 1]) > gap_threshold:
+            fold_starts.append(all_dates[i])
+
+    # Her fold içinde rebalance günleri: fold_start + her N işlem günü
+    rebalance_dates = set()
+    for fs in fold_starts:
+        fs_idx = all_dates.index(fs)
+        # Bu fold'un son günü = bir sonraki fold_start'ın bir önceki günü veya panel sonu
+        next_fs_idx = next(
+            (all_dates.index(nfs) for nfs in fold_starts if all_dates.index(nfs) > fs_idx),
+            len(all_dates),
+        )
+        fold_dates = all_dates[fs_idx:next_fs_idx]
+        for j in range(0, len(fold_dates), rebalance_freq):
+            rebalance_dates.add(fold_dates[j])
 
     # Sadece rebalance günlerinde top-N seç
     rb = s[s["date"].isin(rebalance_dates)].copy()
@@ -81,9 +103,19 @@ def _build_positions(
     rb["weight"] = (1.0 / rb["n_picked"]).clip(upper=max_pos)
 
     pivot = rb.pivot(index="date", columns="ticker", values="weight")
-    # Rebalance günleri arasındaki günler: önceki ağırlıkları taşı (forward fill)
+
+    # ffill ama fold sınırlarında SIFIRLA: her fold için ayrı ffill
     full_index = pd.DatetimeIndex(all_dates)
-    pivot = pivot.reindex(full_index).ffill().fillna(0)
+    pivot = pivot.reindex(full_index)
+    out_chunks = []
+    for i, fs in enumerate(fold_starts):
+        fs_idx = all_dates.index(fs)
+        next_fs_idx = (all_dates.index(fold_starts[i + 1])
+                       if i + 1 < len(fold_starts) else len(all_dates))
+        chunk_dates = all_dates[fs_idx:next_fs_idx]
+        chunk = pivot.loc[chunk_dates].ffill().fillna(0)
+        out_chunks.append(chunk)
+    pivot = pd.concat(out_chunks).fillna(0)
     return pivot
 
 
@@ -94,29 +126,64 @@ def _daily_pnl(
 ) -> pd.Series:
     """Pozisyon ağırlıklarından net günlük portföy getirisi.
 
-    Mantık:
-    - Sinyal t-1 günü kapanışta üretilir (build_features lag=True).
-    - Pozisyon t günü açılır, t günü kapanışına kadar tutulur.
-    - Net daily return = weights[t] × rets[t] - turnover_cost.
+    DOĞRU ZAMANSAL ALIGNMENT (kritik):
+    - Feature'lar (lag=True) → t günü için close[..., t-1] verisini kullanır.
+    - Model train target: row i = "close[i]'da al, close[i+1..i+N] gözle".
+    - weights[t] = "t günü close'da girilecek pozisyon kararı".
+    - Earn edilen return: close[t]→close[t+1] = rets[t+1].
+    - PnL hesabı: weights[t] × rets[t+1] → series: gross = weights.shift(1) * rets
 
     Sadece weights'in tanımlı olduğu (test) günler için PnL hesaplanır;
     boş günler 0 ile doldurulup Sharpe'ı bozmaz — out-of-sample (out-of-market)
     olan günler hiç katılmaz.
     """
     rets = panel.pivot(index="date", columns="ticker", values="close").pct_change()
-    # Weights'in tanımlı olduğu tarih × ticker kesişimi
-    common_dates = weights.index.intersection(rets.index)
-    common_cols = weights.columns.intersection(rets.columns)
-    w = weights.loc[common_dates, common_cols].fillna(0)
-    r = rets.loc[common_dates, common_cols].fillna(0)
+    # Weights'in olduğu günler + 1 gün ileri (PnL realisation günleri için)
+    if weights.empty:
+        return pd.Series(dtype=float)
 
-    gross = (w * r).sum(axis=1)
-    # Turnover — ilk gün full entry
-    diff = w.diff()
-    diff.iloc[0] = w.iloc[0]
+    all_panel_dates = sorted(rets.index)
+    # weights tarihlerini al ve her birinin BİR SONRAKİ panel tarihini ekle
+    pnl_dates = []
+    for d in weights.index:
+        idx = pd.Index(all_panel_dates).get_indexer([d])[0]
+        if idx >= 0 and idx + 1 < len(all_panel_dates):
+            pnl_dates.append(all_panel_dates[idx + 1])
+    pnl_dates = pd.DatetimeIndex(sorted(set(pnl_dates)))
+
+    if len(pnl_dates) == 0:
+        return pd.Series(dtype=float)
+
+    common_cols = weights.columns.intersection(rets.columns)
+    # Her PnL günü için, ÖNCEKİ panel günündeki weights × o günün rets'i
+    pnl_rows = {}
+    for pd_date in pnl_dates:
+        prev_idx = pd.Index(all_panel_dates).get_loc(pd_date) - 1
+        prev_date = all_panel_dates[prev_idx]
+        if prev_date not in weights.index:
+            continue
+        w_row = weights.loc[prev_date, common_cols].fillna(0)
+        r_row = rets.loc[pd_date, common_cols].fillna(0)
+        pnl_rows[pd_date] = float((w_row * r_row).sum())
+    gross = pd.Series(pnl_rows).sort_index()
+
+    # Turnover: weights diff (rebalance günleri arası)
+    w_aligned = weights.loc[:, common_cols].fillna(0)
+    diff = w_aligned.diff()
+    if len(diff) > 0:
+        diff.iloc[0] = w_aligned.iloc[0]
     turnover = diff.abs().sum(axis=1)
-    cost_pct = turnover * cost.one_way_cost()
-    return gross - cost_pct
+    # Turnover cost'u o günün (kararın alındığı gün) değil, bir sonraki günün (entry) realisation'ında uygula
+    cost_per_date = {}
+    for d in w_aligned.index:
+        idx = pd.Index(all_panel_dates).get_loc(d)
+        if idx + 1 < len(all_panel_dates):
+            entry_day = all_panel_dates[idx + 1]
+            cost_per_date[entry_day] = turnover.loc[d] * cost.one_way_cost()
+    cost_series = pd.Series(cost_per_date).sort_index()
+    cost_series = cost_series.reindex(gross.index).fillna(0)
+
+    return gross - cost_series
 
 
 def _benchmark_returns(panel: pd.DataFrame) -> pd.Series:

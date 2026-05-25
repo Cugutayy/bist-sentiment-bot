@@ -15,8 +15,13 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
+
+
+def _utcnow() -> datetime:
+    """Naive UTC datetime — pandas/parquet için tz-aware sorun yaratır."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 import feedparser
 import pandas as pd
@@ -107,7 +112,7 @@ def fetch_feed(name: str, url: str) -> list[dict]:
         if published:
             ts = datetime(*published[:6])
         else:
-            ts = datetime.utcnow()
+            ts = _utcnow()
         # Body için title + summary birleştir (RSS genelde tam metin vermez)
         body = (title + " — " + summary).strip(" —")
         tickers = match_tickers(body)
@@ -122,7 +127,7 @@ def fetch_feed(name: str, url: str) -> list[dict]:
                 "summary": summary[:1000],   # safety cap
                 "published_at": ts,
                 "ticker": ticker,
-                "ingested_at": datetime.utcnow(),
+                "ingested_at": _utcnow(),
             })
     logger.info(f"[{name}] {len(items)} eşleşme bulundu")
     return items
@@ -142,7 +147,7 @@ def fetch_all() -> pd.DataFrame:
     df = pd.DataFrame(all_items).drop_duplicates(subset=["id"]).sort_values("published_at")
 
     # Tarih bazında dosya — günlük partition
-    today = datetime.utcnow().date().isoformat()
+    today = _utcnow().date().isoformat()
     path = RAW_NEWS_DIR / f"news_{today}.parquet"
 
     if path.exists():

@@ -85,7 +85,7 @@ def check(ticker: str, df: pd.DataFrame) -> list[QualityIssue]:
 
     # 4) Stale check
     last_date = df["date"].max()
-    business_days_ago = pd.bdate_range(last_date, pd.Timestamp.utcnow().tz_localize(None)).size - 1
+    business_days_ago = pd.bdate_range(last_date, pd.Timestamp.now(tz="UTC").tz_localize(None)).size - 1
     if business_days_ago > STALE_DAYS_WARN:
         issues.append(QualityIssue(ticker, "stale", "warn",
                                    f"Son veri {business_days_ago} iş günü önce ({last_date.date()})"))

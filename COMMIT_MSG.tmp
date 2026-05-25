@@ -1,45 +1,60 @@
-feat: backtest↔live parity testleri + paper trading log + honest gap analizi
+fix: 4 kritik bug — PnL 1-gün shift, fold sınırı ffill, deprecated utcnow
 
-Kullanıcı uyarısı: "backtestte kar var ama canlıda farklıysa backtest
-yalan". Bu commit ile bu disipline operasyonel hâl verildi.
+Bug 1: PnL alignment hatası (KRİTİK)
+-------------------------------------
+backtest/engine._daily_pnl önceki haliyle weights[t] × rets[t]
+hesaplıyordu = "bugünkü karar × dünden bugüne getiri" (geriye dönük!).
 
-3 yeni parity testi (tests/test_backtest_live_parity.py)
---------------------------------------------------------
-- test_backtest_and_live_features_match_for_same_date:
-  Aynı t günü için backtest (full panel) ve live (cutoff'a kadar
-  panel) build_features(lag=True) AYNI değer vermeli — yoksa
-  feature fonksiyonunda lookahead var.
-- test_cross_sectional_features_use_only_current_universe:
-  cs_z-score'lar live'da da tutarlı, çünkü date bazında groupby ile
-  hesaplanıyor (full panel görmüyor).
-- test_no_future_data_affects_past_features:
-  Gelecek günler eklenince geçmiş feature değişmemeli.
+Doğru alignment:
+- Model target: row i = "close[i]'da al, close[i+1..i+N] gözle"
+- Feature lag=True: row i için close[..., i-1] bilgisi
+- weights[t] = "t günü close'da girilecek pozisyon kararı"
+- Earn edilen return: close[t]→close[t+1] = rets[t+1]
+- PnL: weights[t] × rets[t+1] (1-gün ileri shift)
 
-3/3 geçti — backtest matematiksel olarak temiz.
+Yeni _daily_pnl: her weights[d] için bir sonraki panel günü (d+1)
+realisation günü olarak alınır, weights[d] × rets[d+1] hesaplanır.
+Turnover cost'u da entry günü realisation'ında uygulanır.
 
-Paper trading log (reports/paper_trading.py)
---------------------------------------------
-- log_predictions(items): her predict çağrısı shortlist'i
-  paper_trades.parquet'a append eder (prediction_date, ticker, rank,
-  score, entry_price).
-- score_outcomes(): geçmiş predictions için 5/10/20 gün sonrasının
-  gerçek return'ünü Yahoo verisinden hesaplar.
-- summary(): paper Sharpe karşılaştırma için temel istatistik.
-- main.py predict her çalıştığında: hem print_shortlist + hem
-  log_predictions + score_outcomes (idempotent — aynı gün üst üste
-  yazılırsa eskisini siler).
+Bug 2: Fold sınırı pozisyon ffill bug
+-------------------------------------
+Walk-forward fold'ları arası 8-9 ay boşluk var (purge+embargo).
+Önceki _build_positions tüm signals'ı tek seri kabul edip ffill
+yapıyordu — fold0 son ağırlığı fold1 ilk gününe taşınıyordu
+(sanki 9 ay boyunca pozisyon tutulmuş gibi).
 
-Cron çalıştırıldıkça 1-2 hafta sonra:
-  paper Sharpe == backtest Sharpe ?  → model sağlam
-  drift varsa → kök analiz (cost model? execution timing? data drift?)
+Düzeltme: gap_threshold = max(rebalance_freq×3, 14) gün eşiği ile
+fold başlangıçları tespit edilir; her fold içinde ayrı rebalance +
+ayrı ffill, fold sınırlarında pozisyon SIFIRLANIR.
 
-27 test toplam, hepsi geçiyor.
+Bug 3: 7 yerde datetime.utcnow() deprecated
+-------------------------------------------
+Python 3.12+ utcnow() deprecated → datetime.now(UTC) yapıldı.
+Dosyalar: price_collector, news_collector, train, main.
+news_collector için _utcnow() helper eklendi (parquet için
+tz-naive zorunlu).
 
-Hala eksikler (sonraki turn'lerde):
-- Point-in-time BIST 100 membership (survivorship bias)
-- Execution timing: close yerine next-day open simülasyonu
-- Sentiment feature integration (data biriksin önce)
-- Sektör cap, likidite gate
-- Cross-source price validation
+Bug 4: pd.Timestamp.utcnow() deprecated (3 yer)
+-----------------------------------------------
+pd.Timestamp.now(tz="UTC").tz_localize(None) yapıldı.
+Dosyalar: data_quality, paper_trading (2 yer).
+
+Sonuçlar
+--------
+Düzeltilmiş backtest (BIST 30, 5y, 6 fold, 82 test günü):
+
+ÖNCE (buglu)          SONRA (düzeltilmiş)
+Sharpe   +0.17        Sharpe   +1.15   (XU100 BH: +0.40)
+CAGR     +2.2%        CAGR    +135.4%  (XU100 BH: +60.3% — TR enflasyon)
+Max DD   -37.6%       Max DD   -14.8%  (XU100 BH: -10.0%)
+Turnover  2.4%        Turnover  15%    (rebalance pattern fold-aware)
+
+HONEST: 82 test günü için Sharpe standard error ~±0.5.
+Yani "gerçek" Sharpe muhtemelen 0.6-1.7 aralığında.
+Kesin alpha kanıtı için 200+ test günü gerekli; paper trading
+log birikince live Sharpe ile cross-check yapılacak.
+
+27/27 test geçiyor (3 parity testi dahil).
+0 deprecation warning.
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

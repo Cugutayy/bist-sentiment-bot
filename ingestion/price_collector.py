@@ -11,7 +11,7 @@ Notlar
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -71,13 +71,13 @@ def fetch_one(ticker: str, force_full: bool = False) -> pd.DataFrame:
     """
     path = _output_path(ticker)
     history_days = SETTINGS["ingestion"]["price_history_days"]
-    default_start = (datetime.utcnow() - timedelta(days=history_days)).date().isoformat()
+    default_start = (datetime.now(UTC).replace(tzinfo=None) - timedelta(days=history_days)).date().isoformat()
 
     if path.exists() and not force_full:
         existing = pd.read_parquet(path)
         last = existing["date"].max()
         start = (last + timedelta(days=1)).date().isoformat()
-        if pd.to_datetime(start) > datetime.utcnow():
+        if pd.to_datetime(start) > datetime.now(UTC).replace(tzinfo=None):
             logger.info(f"{ticker}: zaten güncel (son: {last.date()})")
             check_and_log(ticker, existing)
             return existing

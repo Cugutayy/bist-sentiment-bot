@@ -25,7 +25,7 @@ def cmd_ingest() -> None:
 
 
 def cmd_score() -> None:
-    from datetime import datetime
+    from datetime import UTC, datetime
     from pathlib import Path
 
     import pandas as pd
@@ -33,7 +33,7 @@ def cmd_score() -> None:
     from config import ROOT
     from nlp.sentiment_claude import score_news
 
-    today = datetime.utcnow().date().isoformat()
+    today = datetime.now(UTC).date().isoformat()
     raw = ROOT / "data" / "raw" / "news" / f"news_{today}.parquet"
     if not raw.exists():
         logger.warning(f"Bugünün ham haberi yok: {raw}")
