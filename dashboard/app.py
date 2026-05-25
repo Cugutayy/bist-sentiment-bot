@@ -303,6 +303,7 @@ with st.sidebar:
         [
             "Genel Bakış",
             "Backtest",
+            "Trades & Neden",
             "Bugünün Shortlist'i",
             "Paper Trading",
             "Sentiment",
@@ -516,6 +517,104 @@ elif page == "Backtest":
                  "pos" if pm["cagr"]*bias > 0 else "neg"),
     ]
     st.markdown(kpi_grid(cards), unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+# PAGE: TRADES & NEDEN
+# ════════════════════════════════════════════════════════════════════
+elif page == "Trades & Neden":
+    st.markdown("# Trades <em style='color:#6b6b6b;font-size:0.7em'>backtest sırasında alınan işlemler + neden</em>", unsafe_allow_html=True)
+
+    from backtest.trade_explainer import build_trade_ledger
+
+    @st.cache_data(show_spinner="Trade ledger oluşturuluyor (model + feature replay)...")
+    def _load_trades():
+        return build_trade_ledger()
+
+    trades = _load_trades()
+
+    if trades.empty:
+        st.markdown(disclose("Trade yok. Önce backtest çalıştır: <code>python main.py backtest</code>"), unsafe_allow_html=True)
+        st.stop()
+
+    # KPI cards
+    n_buy = int((trades["action"] == "BUY").sum())
+    n_sell = int((trades["action"] == "SELL").sum())
+    n_unique = trades["ticker"].nunique()
+    n_dates = trades["date"].nunique()
+    avg_score = float(trades["score"].mean())
+    cards = [
+        kpi_card("Toplam Trade", str(len(trades)), f"{n_buy} BUY · {n_sell} SELL", "neutral"),
+        kpi_card("Unique Ticker", str(n_unique), "farklı hisse", "neutral"),
+        kpi_card("Rebalance Günü", str(n_dates), "fold bazlı", "neutral"),
+        kpi_card("Ort. Skor", f"{avg_score:.3f}" if pd.notna(avg_score) else "—",
+                 "predict_proba", "pos" if avg_score > 0.5 else "neutral"),
+    ]
+    st.markdown(kpi_grid(cards), unsafe_allow_html=True)
+
+    # Filtrele
+    st.markdown('<div class="section-title">Filtrele</div>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        action_filter = st.selectbox("Aksiyon", ["Tümü", "BUY", "SELL"])
+    with col2:
+        ticker_options = ["Tümü"] + sorted(trades["ticker"].unique().tolist())
+        ticker_filter = st.selectbox("Ticker", ticker_options)
+    with col3:
+        date_range = st.date_input(
+            "Tarih aralığı",
+            value=(trades["date"].min().date(), trades["date"].max().date()),
+        )
+
+    filtered = trades.copy()
+    if action_filter != "Tümü":
+        filtered = filtered[filtered["action"] == action_filter]
+    if ticker_filter != "Tümü":
+        filtered = filtered[filtered["ticker"] == ticker_filter]
+    if len(date_range) == 2:
+        d0, d1 = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
+        filtered = filtered[(filtered["date"] >= d0) & (filtered["date"] <= d1)]
+
+    st.markdown(f'<div class="section-title">Trade Ledger <span style="color:#6b6b6b;font-size:0.7em">({len(filtered)} kayıt)</span></div>', unsafe_allow_html=True)
+
+    # Render: her trade için tek kart
+    if filtered.empty:
+        st.markdown(disclose("Filtre kriterlerine uyan trade yok."), unsafe_allow_html=True)
+    else:
+        # Tablo halinde kompakt görünüm
+        display = filtered.copy()
+        display["date"] = display["date"].dt.strftime("%Y-%m-%d")
+        display["weight_delta"] = display["weight_delta"].apply(lambda x: f"{x*100:+.1f}%")
+        display["new_weight"] = display["new_weight"].apply(lambda x: f"{x*100:.1f}%")
+        display["score"] = display["score"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+        display = display[["date", "ticker", "action", "weight_delta", "new_weight", "score", "rationale"]]
+        display.columns = ["Tarih", "Ticker", "Aksiyon", "Δ Ağırlık", "Yeni Ağırlık", "Skor", "Neden (top 3 feature)"]
+        st.dataframe(display, use_container_width=True, hide_index=True)
+
+    # Per-ticker rationale özet
+    st.markdown('<div class="section-title">Hangi Sinyaller En Çok Tetikledi?</div>', unsafe_allow_html=True)
+    # Rationale'lardan feature isimleri çıkar
+    import re
+    feature_pattern = re.compile(r"([a-zA-Z_0-9]+)=")
+    all_features = []
+    for rat in trades["rationale"].dropna():
+        all_features.extend(feature_pattern.findall(rat))
+    if all_features:
+        feat_counts = pd.Series(all_features).value_counts().head(10)
+        fig_feat = go.Figure(go.Bar(
+            x=feat_counts.values, y=feat_counts.index,
+            orientation="h", marker_color="#4ade80",
+            text=feat_counts.values, textposition="outside",
+        ))
+        fig_feat.update_layout(**PLOTLY_LAYOUT, height=380, showlegend=False)
+        fig_feat.update_yaxes(autorange="reversed")
+        fig_feat.update_xaxes(title="Kaç trade'de top-3'te")
+        st.plotly_chart(fig_feat, use_container_width=True)
+        st.markdown(disclose(
+            "<strong>rsi_14</strong> ve <strong>cs_momentum_60</strong> en sık tetikleyici feature'lar — "
+            "model BIST'te momentum + aşırı satılmış-toparlanma kalıplarına ağırlık vermiş.",
+            kind="info",
+        ), unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════════════════════

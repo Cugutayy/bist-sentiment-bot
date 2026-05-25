@@ -9,13 +9,18 @@ venv/
 htmlcov/
 
 # Veri (ham veri büyük, kullanıcı kendisi indirir)
-# Recursive — alt klasörlerdeki tüm parquet/csv'ler ignore.
+# Recursive — raw + cache git'lenmez. processed seçici şekilde.
 data/raw/
-data/processed/
 data/cache/
-# Sadece .gitkeep istisna (klasör yapısı korunur):
+data/processed/
+# Klasör yapısı korunsun:
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+# CLOUD DASHBOARD İÇİN KÜÇÜK ARTIFACT'LAR — sync_artifacts.py ile commit edilir
+!data/processed/backtests/
+!data/processed/paper_trades.parquet
+!data/processed/sentiment_daily.parquet
+!data/processed/shortlist_*.parquet
 
 # Modeller (artifact'lar repo'da değil — her ortam kendisi backtest ile üretir)
 models/*.joblib
