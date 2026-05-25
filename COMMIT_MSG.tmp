@@ -1,55 +1,40 @@
-feat(faz5): next-day open execution + backtest artifact persistence + inspect tool
+feat: Streamlit web dashboard + predict bug fix + final review
 
-ÖNEMLİ HONEST SONUÇ
--------------------
-Close-to-close execution (önceki) → Sharpe 1.07, CAGR 125%
-Next-day open execution (gerçekçi) → Sharpe 0.40, CAGR 60%
-Bias-adjusted → Sharpe 0.34, CAGR 54%
-XU100 BH (aynı dönem) → Sharpe 0.40, CAGR 60%
+Yeni: dashboard/app.py — Streamlit web arayüzü
+-----------------------------------------------
+7 sayfa:
+1. Özet — KPI metrikleri + sistem durumu + honest disclosure
+2. Backtest — equity curve, aylık return, en iyi/kötü günler,
+   per-ticker frekans, fold breakdown, bias adjustment slider
+3. Bugünün Shortlist'i — top-N + neden
+4. Paper Trading — live ↔ backtest cross-check (Sharpe karşılaştırma)
+5. Sentiment — ticker × tarih sentiment pivot + özet
+6. Veri Kalitesi — yfinance audit table (NaN, jump, gap, last_date)
+7. Konfig & Mimari — settings.yaml + mimari diyagram + honest disclosure
 
-Strateji XU100 BH'yi YENMİYOR. Bu honest gerçek:
-- Overnight gap'ler close-to-close backtest'te ücretsiz görünüyordu
-- Live'da gap-up haberlerinden faydalanamazsın
-- Fiyat-only feature'lar BIST'te alfa üretmiyor (sentiment olmadan)
-- Sentiment data biriktikçe iyileşmesi beklenir
+Çalıştırma:
+  streamlit run dashboard/app.py     # yerel → http://localhost:8501
+  Cloud deploy: share.streamlit.io (ücretsiz, GitHub bağlanır)
 
-Next-day open execution (backtest/engine._daily_pnl)
-----------------------------------------------------
-OHLC ile gerçekçi simülasyon:
-- HELD (sticky weight): close[t-1] → close[t] = cc_ret
-- ENTERED (yeni alım): open[t] → close[t] = intraday_ret
-- EXITED (satış): close[t-1] → open[t] = overnight_ret
+Bug fix: strategy/shortlist.py predict
+---------------------------------------
+build_training_set'te halisünasyon defansı için sentiment NaN
+toleransı eklemiştik ama generate_shortlist'te aynı düzeltme yoktu
+→ sentiment yokken tüm satırlar atılıyor, snapshot boş kalıyor,
+"Tarih NaT için veri yok" hatası.
 
-PnL per ticker per day = held×cc + exited×on + entered×id
+Düzeltme: dropna(subset=price_feat_cols), sent_* NaN korunur.
+LightGBM missing branch ile predict edebilir.
 
-Bu, "overnight gap riski"ni doğru simüle eder:
-- İyi haberle gap-up: live trader gap'i kaçırır (entered×intraday < cc)
-- Kötü haberle gap-down: live trader gap'ten KORUNMUŞ olur (exited×overnight)
+Final review (33/33 test geçti):
+- Syntax: tüm Python dosyaları OK
+- Import graph: 18 modül, circular yok
+- Deprecation warning: 0
+- Backtest: end-to-end çalışır + artifact persistence
+- Predict: çalışır + paper trade log
+- Aggregate: çalışır (sentiment data yokken boş output)
+- 2141 satır kod, 382 test satırı (17.8% test/code oranı)
 
-Maliyet sadece exit + enter'a uygulanır (held için 0).
-
-Backtest artifact persistence
-------------------------------
-data/processed/backtests/<run_id>/ altında her run için:
-- daily.parquet: portfolio_return, benchmark_return, equity curve
-- weights.parquet: date × ticker pozisyon matrisi
-- summary.json: tüm metrikler + fold breakdown
-
-scripts/inspect_backtest.py
----------------------------
-Backtest sonuçlarını detaylı analiz:
-- ASCII equity curve
-- Aylık return tablosu
-- En iyi/kötü 5 gün + o günkü pozisyonlar
-- Per-ticker portföyde geçen gün sayısı
-- Fold-by-fold breakdown
-- --plot ile matplotlib PNG
-
-Örnek bulgular:
-- En iyi gün: 2023-02-15 +18.47% (deprem dönüşü)
-- En çok seçilen ticker: THYAO 77 gün, TTKOM 67 gün
-- Aylık return'lerde belirgin volatility
-
-Tests: 33/33 geçti.
+requirements.txt: streamlit + plotly eklendi.
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

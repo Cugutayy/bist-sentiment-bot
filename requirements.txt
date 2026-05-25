@@ -1,3 +1,7 @@
+# Web Dashboard (Streamlit Cloud free tier ile deploy edilebilir)
+streamlit>=1.40.0
+plotly>=5.24.0
+
 # Veri
 yfinance>=0.2.40
 pandas>=2.2.0

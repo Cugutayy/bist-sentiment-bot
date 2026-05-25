@@ -47,6 +47,26 @@ pip install -r requirements.txt
 cp .env.example .env        # ANTHROPIC_API_KEY doldur
 ```
 
+## Web Dashboard (Streamlit)
+
+Tüm backtest sonuçları, paper trade kayıtları, shortlist'i interaktif
+görmek için:
+
+```bash
+streamlit run dashboard/app.py
+# → http://localhost:8501
+```
+
+7 sayfa: Özet · Backtest · Shortlist · Paper Trading · Sentiment ·
+Veri Kalitesi · Konfig.
+
+**Cloud deploy (ücretsiz)**: [share.streamlit.io](https://share.streamlit.io)
+→ GitHub repo'yu bağla → `dashboard/app.py` seç → otomatik deploy.
+
+Cloud dashboard sadece repo'daki "snapshot" veriyi gösterir. Sürekli
+güncel veri için cron PC'de veya VPS'te çalışmalı (data klasörü
+git'lenmez, sadece local).
+
 ## Kullanım
 
 ```bash

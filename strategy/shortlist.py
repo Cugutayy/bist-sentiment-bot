@@ -92,7 +92,11 @@ def generate_shortlist(
 
     panel = load_panel()
     features = build_features(panel, lag=False)   # canlı predict için lag yok
-    features = features.dropna(subset=feat_cols)
+
+    # Halisünasyon defansı: sentiment feature'ları NaN kalabilir (data yok),
+    # bu satırı atmamalıyız. Sadece fiyat-based feature'lardaki NaN'leri at.
+    price_feat_cols = [c for c in feat_cols if not c.startswith("sent_")]
+    features = features.dropna(subset=price_feat_cols)
 
     if as_of is None:
         as_of_dt = features["date"].max()
