@@ -56,7 +56,16 @@ def build_training_set(panel_with_features: pd.DataFrame) -> tuple[pd.DataFrame,
 
     feat_cols = feature_columns(panel)
     keep = ["date", "ticker", "target"] + feat_cols
-    panel = panel[keep].dropna()
+    panel = panel[keep]
+
+    # ÖNEMLİ halisünasyon defansı:
+    # - Fiyat-based feature'lar (ret_, vol_, momentum_, rsi_, cs_, rel_strength_)
+    #   NaN ise satırı at (warm-up dönemi vs).
+    # - sentiment feature'ları (sent_*) NaN olabilir — LightGBM bunu missing
+    #   branch olarak ayırt eder, atılması doğru DEĞİL.
+    # - target NaN olamaz.
+    price_feat_cols = [c for c in feat_cols if not c.startswith("sent_")]
+    panel = panel.dropna(subset=["target"] + price_feat_cols)
 
     X = panel[feat_cols]
     y = panel["target"]

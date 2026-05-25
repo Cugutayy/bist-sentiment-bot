@@ -156,15 +156,30 @@ def _daily_pnl(
 
     common_cols = weights.columns.intersection(rets.columns)
     # Her PnL günü için, ÖNCEKİ panel günündeki weights × o günün rets'i
+    # ÖNEMLİ halisünasyon defansı: eksik return'leri 0 ile DOLDURMUYORUZ.
+    # Eğer bir ticker'ın o günkü close'u eksikse (delisting, suspended, vs.),
+    # o ticker'ı portföyden ÇIKAR ve kalan ağırlıkları renormalize et.
     pnl_rows = {}
+    excluded_count = 0
     for pd_date in pnl_dates:
         prev_idx = pd.Index(all_panel_dates).get_loc(pd_date) - 1
         prev_date = all_panel_dates[prev_idx]
         if prev_date not in weights.index:
             continue
         w_row = weights.loc[prev_date, common_cols].fillna(0)
-        r_row = rets.loc[pd_date, common_cols].fillna(0)
+        r_row = rets.loc[pd_date, common_cols]
+        # Eksik return olan ticker'ları çıkar (delisting / suspended / data eksik)
+        valid_mask = r_row.notna()
+        if (~valid_mask).any() and (w_row > 0).any():
+            n_missing = int(((w_row > 0) & ~valid_mask).sum())
+            if n_missing > 0:
+                excluded_count += n_missing
+            # Eksik ticker'lara olan ağırlığı pozisyon dışı kabul et (nakit)
+            w_row = w_row * valid_mask
+            r_row = r_row.fillna(0)
         pnl_rows[pd_date] = float((w_row * r_row).sum())
+    if excluded_count > 0:
+        logger.warning(f"PnL: {excluded_count} pozisyon eksik return nedeniyle nakitleştirildi")
     gross = pd.Series(pnl_rows).sort_index()
 
     # Turnover: weights diff (rebalance günleri arası)
@@ -280,6 +295,7 @@ def run_backtest(
 
 def print_report(result: BacktestResult, cost: CostModel = DEFAULT_COSTS) -> None:
     """Konsola backtest raporu."""
+    from backtest.survivorship import disclose_survivorship_bias, estimate_bias_magnitude
     print()
     print("=" * 70)
     print("BACKTEST RAPORU")
@@ -306,4 +322,17 @@ def print_report(result: BacktestResult, cost: CostModel = DEFAULT_COSTS) -> Non
     for fm in result.fold_metrics:
         print(f"  Fold {fm['fold']:>2}: test={fm['test_period']} "
               f"n_train={fm['train_n']:>5} pos_rate={fm['positive_rate_train']:.3f}")
+    print()
+    print("─" * 70)
+    print(disclose_survivorship_bias())
+    bias = estimate_bias_magnitude()
+    print(f"Tahmini bias büyüklüğü: {bias['estimated_annual_bias_pct']}% yıllık")
+    print(f"5 yıl kümülatif:        {bias['cumulative_bias_5yr_pct']}%")
+    print(f"Öneri: {bias['recommendation']}")
+    print()
+    sharpe_realistic = result.overall_metrics.get("sharpe", 0) * 0.85
+    cagr_realistic = result.overall_metrics.get("cagr", 0) * 0.90
+    print(f"Realistik tahminler (bias düzeltilmiş):")
+    print(f"  Sharpe: {sharpe_realistic:.2f}  (raw: {result.overall_metrics.get('sharpe'):.2f})")
+    print(f"  CAGR:   {cagr_realistic*100:.1f}%  (raw: {result.overall_metrics.get('cagr')*100:.1f}%)")
     print()

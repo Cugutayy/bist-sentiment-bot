@@ -163,17 +163,24 @@ def _add_sentiment_features(panel: pd.DataFrame) -> pd.DataFrame:
         "sent_news_count_7d", "sent_news_surge", "sent_std_7d",
     ]
 
+    # ÖNEMLİ: Halisünasyon önleme — sentiment data YOKKEN feature 0 OLAMAZ.
+    # 0 = "neutral sentiment" anlamına gelir model için, oysa "haber yok"
+    # tamamen farklı bilgi. LightGBM NaN'leri "missing" olarak ayırt eder
+    # ve kendi branch'ini öğrenir. NaN bırakıyoruz.
     if not SENTIMENT_DAILY.exists():
-        logger.info("Sentiment data yok → sentiment feature'lar 0 ile dolduruluyor")
+        logger.info("Sentiment data yok → sentiment feature'lar NaN (LightGBM handle eder)")
         for c in sent_cols:
-            panel[c] = 0.0
+            panel[c] = np.nan
+        # Flag: bu satır için sentiment data var mı (binary)
+        panel["sent_has_data"] = 0
         return panel
 
     sent = pd.read_parquet(SENTIMENT_DAILY)
     if sent.empty:
-        logger.info("Sentiment data boş → sentiment feature'lar 0 ile dolduruluyor")
+        logger.info("Sentiment data boş → sentiment feature'lar NaN")
         for c in sent_cols:
-            panel[c] = 0.0
+            panel[c] = np.nan
+        panel["sent_has_data"] = 0
         return panel
 
     sent["date"] = pd.to_datetime(sent["date"])
@@ -197,12 +204,16 @@ def _add_sentiment_features(panel: pd.DataFrame) -> pd.DataFrame:
     sent["sent_news_surge"] = (sent["news_count"] / nc30.replace(0, np.nan)).fillna(1.0).clip(0, 10)
     sent["sent_std_7d"] = g["sentiment_std"].transform(lambda s: s.rolling(7, min_periods=1).mean())
 
-    # Panel'e merge — ticker × date, sentiment olmayan satırlar 0 ile dolar
+    # Panel'e merge — ticker × date. Eşleşmeyen satırlarda sent_* = NaN.
+    # NaN bırakıyoruz (0 yerine) çünkü "haber yok" ≠ "neutral sentiment".
+    # LightGBM NaN'leri missing branch olarak öğrenir.
     sent_keep = sent[["date", "ticker"] + sent_cols]
     panel = panel.merge(sent_keep, on=["date", "ticker"], how="left")
-    for c in sent_cols:
-        panel[c] = panel[c].fillna(0.0)
 
-    matched = int((panel[sent_cols[0]] != 0).sum())
-    logger.info(f"Sentiment merged: {matched}/{len(panel)} satırda non-zero sentiment")
+    # Flag: bu satırın gerçek sentiment'i var mı (binary feature)
+    panel["sent_has_data"] = panel[sent_cols[0]].notna().astype(int)
+
+    matched = int(panel["sent_has_data"].sum())
+    logger.info(f"Sentiment merged: {matched}/{len(panel)} satırda gerçek sentiment, "
+                f"geri kalan NaN (model missing branch olarak öğrenir)")
     return panel

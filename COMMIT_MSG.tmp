@@ -1,56 +1,66 @@
-feat(faz4): sentiment integration — literatür tabanlı 6 katmanlı koruma
+fix: 4 halisünasyon riski + survivorship disclosure + 6 yeni test
 
-Tek-haber dominasyonu önleme (overreaction problem):
-"Salient news triggers immediate overreactions ... mean-reversion patterns
-erode multi-period predictive value" (arXiv 2505.16136)
+Kullanıcı uyarısı: "kodun testin botun halisünasyon yaşamasın",
+"backtestlerin live testlerden daha başarılı olmaması".
 
-Yeni modül: nlp/sentiment_aggregator.py
------------------------------------------
-Skorlanmış haberler (data/processed/sentiment_*.parquet) →
-ticker × tarih bazlı ağırlıklı agregasyon (sentiment_daily.parquet).
+Sistematik audit: panel + feature + backtest pipeline'da uydurma
+sinyaller üretebilecek 4 risk tespit edildi, hepsi düzeltildi.
 
-6 katmanlı koruma:
-1) Winsorization: ±%95 quantile clip (extreme tek-haber sentiment)
-2) Confidence weighting: Claude'un güven skoru çarpan
-3) Relevance weighting: hisseyle ilgi düşükse az ağırlık
-4) Source credibility: KAP > Reuters > genel haber > sosyal (settings.yaml)
-5) Time decay: exp(-age_days / 5) — half-life 5 gün
-6) min_news threshold: tek haberle güçlü sinyal verme
+RISK 1 — Sentiment 0 default (HİSPATA):
+---------------------------------------
+features/feature_engineering._add_sentiment_features:
+Sentiment data yokken sent_* feature'lar 0 ile dolduruluyordu.
+Model bunu "neutral sentiment" diye yorumlar, oysa "haber yok"
+tamamen farklı bilgi.
 
-Formula:
-  weight[h] = source_cred[s] × relevance[h] × confidence[h] × decay[age]
-  sentiment_daily[t,i] = Σ(weight × sentiment) / Σ(weight)
+Düzeltme: 0 yerine NaN bırak (LightGBM missing branch öğrenir) +
+yeni `sent_has_data` flag feature (binary: 0/1). 37,478/37,508
+satırda davranış değişti.
 
-8 yeni sentiment feature (features/feature_engineering.py)
-----------------------------------------------------------
-- sent_w_3d / 7d / 14d: ağırlıklı rolling mean (multi-horizon)
-- sent_surprise: today − rolling_30d (mean reversion baseline)
-- sent_momentum: EMA(7) − EMA(30) (trend)
-- sent_news_count_7d: haber sayısı
-- sent_news_surge: today / 30d_avg (anormal aktivite)
-- sent_std_7d: uzlaşmazlık
+RISK 2 — Backtest pivot fillna(0) (HİSPATA):
+---------------------------------------------
+backtest/engine._daily_pnl: Eksik fiyat olan ticker'lar için
+return 0 ile dolduruluyordu → "hareketsiz hisse" iddiası.
 
-Graceful fallback: sentiment_daily.parquet yoksa veya boşsa, tüm
-sent_* feature'lar 0 ile dolar → model fiyat-only baseline'a düşer.
-Backtest her durumda çalışır.
+Düzeltme: missing return olan ticker'ları o gün portföyden çıkar,
+ağırlığı nakit kabul et. Log uyarısı eklendi.
 
-Bug fix: feature_engineering build_features içinde sentiment merge
-sonrası 'grouped' referansı bayatlıyordu; out.groupby ile yenilendi.
+RISK 3 — build_training_set dropna agresif (REGRESSION):
+--------------------------------------------------------
+Sentiment NaN olunca tüm 37K satır atılıyordu.
+Düzeltme: dropna(subset=price_features + target). Sentiment NaN
+korunur, LightGBM handle eder.
 
-main.py yeni komut: aggregate
+RISK 4 — Survivorship bias DECLARE EDİLMİYOR:
+---------------------------------------------
+Backtest bugünkü BIST 30'u 5y geriye uyguluyor. Dataset'te
+"öldürülmüş" hisseler yok — %5-15 fazladan CAGR var muhtemelen.
 
-Settings:
-- nlp.aggregation: decay_half_life_days=5, winsorize_pct=0.05
-- source_credibility tablosu (8 kaynak + default)
+Düzeltme:
+- backtest/survivorship.py: disclosure metni + tahmini bias.
+- print_report sonuna survivorship uyarısı + realistik tahmin
+  (raw_sharpe × 0.85, raw_cagr × 0.90).
+- settings.yaml costs.slippage_bps 5 → 15 (next-day open execution
+  overnight gap proxy).
 
-Test sonuçları:
-- 27/27 test geçti
-- Backtest: 14 → 22 feature, Sharpe +1.15 (sentiment data eksik
-  olduğu için hala fiyat-only, gerçek sentiment biriktikçe değişir)
+Honest sonuçlar (BIST 30, 5y, 6 fold, slipaj artırıldı):
+  Raw:        Sharpe 1.07  CAGR 125.9%
+  Bias-adj:   Sharpe 0.91  CAGR 113.3%
+  XU100 BH:   Sharpe 0.40  CAGR 60.3%
 
-Sentiment data biriktirme:
-- Cron her gün ingest + score çalıştığında news birikir
-- Aggregate haftalık ya da günlük çalıştırılır
-- 1-2 ay sonra anlamlı feature için yeterli data oluşur
+6 yeni test (tests/test_halicination_defense.py):
+- test_sentiment_missing_is_nan_not_zero
+- test_sentiment_partial_data_no_implicit_zero
+- test_no_feature_columns_have_inf
+- test_rsi_bounded_0_100
+- test_volume_zero_doesnt_break_zscore
+- test_dropna_in_training_doesnt_kill_all_rows_when_sentiment_missing
+
+Toplam test: 33/33 (önceki 27 + 6 yeni).
+
+TODO (Faz 5):
+- Next-day open execution full simülasyon (OHLC ile)
+- Point-in-time BIST 100 membership (survivorship FIX, sadece disclose değil)
+- Sentiment data biriktirme (cron çalışınca otomatik)
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

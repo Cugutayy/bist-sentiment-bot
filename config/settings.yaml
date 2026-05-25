@@ -122,11 +122,16 @@ model:
     embargo_days: 5                  # data leak savunması (autocorrelation)
 
 # BIST cost modeli (yıllık güncelle)
+# NOT: close-to-close execution varsayımı. Live'da next-day open alımı
+# yapılacaksa, overnight gap riski slippage'ı artırır. BIST'te ortalama
+# overnight gap |%0.3-0.5|, news günlerinde |%1-2|. Conservative slippage
+# bunu kısmen kapsar.
 costs:
   commission_pct: 0.0005             # %0.05 broker (ortalama)
   bsmv_pct: 0.05                     # komisyon üzerinden %5 BSMV
-  spread_bps: 15                     # bp tahmini (likit BIST 30 için 5-10, küçük cap 25+)
-  slippage_bps: 5                    # market impact tahmini
+  spread_bps: 15                     # bp tahmini (likit BIST 30: 5-10, küçük cap: 25+)
+  slippage_bps: 15                   # market impact + overnight gap proxy (artırıldı: 5→15)
+                                     # TODO: Faz 5 — OHLC ile gerçek open-execution simülasyonu
 
 # Strateji
 strategy:
