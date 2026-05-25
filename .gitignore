@@ -17,9 +17,10 @@ data/cache/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
-# Modeller
+# Modeller (artifact'lar repo'da değil — her ortam kendisi backtest ile üretir)
 models/*.joblib
 models/*.pkl
+models/artifacts/
 
 # Loglar
 logs/
