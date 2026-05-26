@@ -56,10 +56,24 @@ def cmd_aggregate() -> None:
 
 
 def cmd_predict() -> None:
+    from datetime import date
+    from config.bist_calendar import is_trading_day, reason_closed, next_trading_day
     from strategy.shortlist import generate_shortlist
     from reports.console import print_shortlist
     from reports.paper_trading import log_predictions, score_outcomes
     from reports.paper_book import open_positions, update_positions, summary as book_summary
+
+    today = date.today()
+    if not is_trading_day(today):
+        nxt = next_trading_day(today)
+        logger.info(f"BIST kapalı — {reason_closed(today)}. Yeni pozisyon AÇILMAYACAK.")
+        logger.info(f"Sonraki açık BIST günü: {nxt}")
+        # Sadece açık pozisyonları update et (TP/SL/TIME kontrolü — diğer dünyada
+        # vade dolanlar kapanmalı; ama yeni shortlist üretmeyiz)
+        update_positions()
+        print("Paper book (sadece update):", book_summary())
+        return
+
     items = generate_shortlist()
     print_shortlist(items)
     # Legacy paper log (5/10/20 gün horizon scoring)

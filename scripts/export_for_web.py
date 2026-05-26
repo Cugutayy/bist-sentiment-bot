@@ -219,13 +219,27 @@ def export_paper_book():
         "worst": round(min(pnls), 5) if pnls else None,
     }
 
+    # BIST market status
+    from config.bist_calendar import is_trading_day, reason_closed, next_trading_day
+    from datetime import date as _date
+    today = _date.today()
+    market = {
+        "is_trading_day": bool(is_trading_day(today)),
+        "reason_closed": reason_closed(today),
+        "next_trading_day": next_trading_day(today).isoformat(),
+        "today": today.isoformat(),
+    }
+
     out = {
         "trades": trades,
         "summary": summary,
+        "market": market,
         "generated_at": datetime.now().isoformat(),
     }
     (OUT_DIR / "paper_book.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"  ✓ paper_book.json ({len(trades)} trade · {summary['open']} açık · {summary['closed']} kapalı)")
+    if not market["is_trading_day"]:
+        print(f"  ! BIST kapalı bugün: {market['reason_closed']} → sonraki: {market['next_trading_day']}")
 
 
 if __name__ == "__main__":

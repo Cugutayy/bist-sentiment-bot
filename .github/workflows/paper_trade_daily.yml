@@ -39,7 +39,20 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: BIST trading-day check
+        id: bist
+        working-directory: bist-sentiment-bot
+        run: |
+          python -c "from config.bist_calendar import is_trading_day, reason_closed; import sys; \
+          ok = is_trading_day(); \
+          print(f'is_trading_day: {ok}'); \
+          print(f'reason: {reason_closed()}') if not ok else None; \
+          sys.exit(0)"
+          python -c "from config.bist_calendar import is_trading_day; print('open' if is_trading_day() else 'closed')" > /tmp/bist_status
+          echo "status=$(cat /tmp/bist_status)" >> $GITHUB_OUTPUT
+
       - name: Ingest fresh price + news data
+        if: steps.bist.outputs.status == 'open'
         working-directory: bist-sentiment-bot
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -47,6 +60,7 @@ jobs:
           python main.py ingest || echo "ingest had warnings, continuing"
 
       - name: Score news with Claude
+        if: steps.bist.outputs.status == 'open'
         working-directory: bist-sentiment-bot
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -59,6 +73,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py predict
+        # NOTE: predict komutu kendi içinde BIST holiday kontrolü yapar:
+        # kapalı günlerde sadece update_positions() çağrılır, yeni pozisyon açılmaz.
 
       - name: Export JSON to portfolio-tracker
         working-directory: bist-sentiment-bot
