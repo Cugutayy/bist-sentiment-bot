@@ -69,6 +69,30 @@ def export_latest_backtest():
             "ret_b": round(float(row["benchmark_return"]), 5),
         })
 
+    # XU100 gerçek tam-yıl getirileri (buy-and-hold benchmark — TL enflasyonu dahil)
+    # Strateji sadece walk-forward test günlerinde aktif, XU100 buy-and-hold her gün.
+    # Apples-to-apples değil ama "gerçek dünyada XU100 ne yaptı" sorusunu cevaplar.
+    benchmark_yearly = []
+    try:
+        xu = pd.read_parquet(ROOT / "data" / "raw" / "prices" / "XU100.IS.parquet")
+        xu["date"] = pd.to_datetime(xu["date"])
+        xu = xu.sort_values("date").set_index("date")
+        for y in sorted(set(xu.index.year)):
+            sub = xu[xu.index.year == y]
+            if len(sub) < 2:
+                continue
+            first = float(sub["close"].iloc[0])
+            last = float(sub["close"].iloc[-1])
+            benchmark_yearly.append({
+                "year": int(y),
+                "ret": round(last / first - 1.0, 5),
+                "first_date": sub.index[0].strftime("%Y-%m-%d"),
+                "last_date":  sub.index[-1].strftime("%Y-%m-%d"),
+                "days": int(len(sub)),
+            })
+    except Exception as e:
+        print(f"  XU100 yearly fetch fail: {e}")
+
     out = {
         "run_id": summary["run_id"],
         "n_folds": summary["n_folds"],
@@ -77,6 +101,7 @@ def export_latest_backtest():
         "benchmark_metrics": summary["benchmark_metrics"],
         "fold_metrics": summary["fold_metrics"],
         "equity": equity,
+        "benchmark_yearly": benchmark_yearly,
         "generated_at": datetime.now().isoformat(),
     }
     (OUT_DIR / "backtest.json").write_text(json.dumps(out, default=_json_safe, indent=2), encoding="utf-8")
