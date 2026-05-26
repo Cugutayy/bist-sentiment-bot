@@ -102,20 +102,30 @@ def _build_positions(
     rb = rb.merge(n_per_day.rename("n_picked"), left_on="date", right_index=True)
     rb["weight"] = (1.0 / rb["n_picked"]).clip(upper=max_pos)
 
-    pivot = rb.pivot(index="date", columns="ticker", values="weight")
+    # BUG FIX (continuous mode): rebalance günlerinde TÜM ticker'lar explicit
+    # 0 ile başla; sadece seçilenler weight alır. Sonra ffill yap (pozisyon
+    # tut). Önceden sadece seçilen ticker'lar pivot'a giriyordu → seçilmeyen
+    # önceki rebalance'lardaki ticker'lar NaN→ffill ile %10 olarak kalıyordu
+    # ve continuous mode'da gross exposure 3x'e çıkıyordu.
+    all_tickers = sorted(s["ticker"].unique())
+    rebalance_sorted = sorted(rebalance_dates)
+    rb_pivot = pd.DataFrame(0.0, index=pd.DatetimeIndex(rebalance_sorted), columns=all_tickers)
+    for _, r in rb.iterrows():
+        rb_pivot.loc[r["date"], r["ticker"]] = float(r["weight"])
 
-    # ffill ama fold sınırlarında SIFIRLA: her fold için ayrı ffill
+    # Tüm günlere ffill (rebalance arası pozisyon tut)
     full_index = pd.DatetimeIndex(all_dates)
-    pivot = pivot.reindex(full_index)
-    out_chunks = []
+    pivot = rb_pivot.reindex(full_index).ffill().fillna(0.0)
+
+    # Fold sınırlarında SIFIRLA (discrete mode için): büyük gap varsa eski
+    # pozisyonları taşımayalım (out-of-sample bütünlük).
     for i, fs in enumerate(fold_starts):
+        if i == 0:
+            continue
         fs_idx = all_dates.index(fs)
-        next_fs_idx = (all_dates.index(fold_starts[i + 1])
-                       if i + 1 < len(fold_starts) else len(all_dates))
-        chunk_dates = all_dates[fs_idx:next_fs_idx]
-        chunk = pivot.loc[chunk_dates].ffill().fillna(0)
-        out_chunks.append(chunk)
-    pivot = pd.concat(out_chunks).fillna(0)
+        # Bu fold'a ait ilk rebalance gününden ÖNCEKİ günler için 0
+        # (gap içinde pozisyon tutmak yanlış olur)
+        pivot.iloc[fs_idx - 1] = pivot.iloc[fs_idx - 1] * 0.0  # önceki gün sıfırla
     return pivot
 
 

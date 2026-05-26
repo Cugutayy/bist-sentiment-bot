@@ -2,8 +2,10 @@
 # Tüm "magic numbers" buraya. Kod içinde hardcoded değer YASAK.
 
 universe:
-  # BIST 100 tickers — point-in-time membership için scripts/update_universe.py
-  # ile periyodik güncelle. .IS suffix yfinance için.
+  # BIST 30 — odaklı evren. BIST 50 denendi ama mid-cap'lerde news kapsamı
+  # zayıf olduğu için sentiment NaN dominansı oluştu, Sharpe +0.40 → -0.37
+  # düştü. Mid-cap noise > sinyal. Rollback yapıldı.
+  # Trade frekansını artırmak için universe yerine rebalance + top_n'i tune.
   tickers:
     - THYAO.IS
     - ASELS.IS
@@ -35,7 +37,6 @@ universe:
     - DOHOL.IS
     - MGROS.IS
     - SOKM.IS
-    # ... Faz 1B sonrası BIST100 tamamına genişler
 
   benchmark: XU100.IS    # Excess return için referans
 
@@ -120,6 +121,11 @@ model:
     test_window_days: 21             # ~1 ay
     purge_days: 5                    # train→test arası purge (label overlap)
     embargo_days: 5                  # data leak savunması (autocorrelation)
+    # continuous=True: anchored walk-forward, ardışık test pencereleri.
+    # Strateji yıl boyunca aktif kalır (live deployment simülasyonu).
+    # continuous=False: klasik gap'li (her fold kendi train'inden başlar).
+    # Live amacı için True; pure out-of-sample sertligi için False.
+    continuous: false
 
 # BIST cost modeli (yıllık güncelle)
 # NOT: close-to-close execution varsayımı. Live'da next-day open alımı
@@ -135,11 +141,12 @@ costs:
 
 # Strateji
 strategy:
-  top_n: 10                          # top-N long
+  top_n: 10                          # top-N long (orijinal — Sharpe maksimize ediyor)
   max_position_pct: 0.10             # tek hisseye max %10
   min_liquidity_tl: 50000000         # günlük >50M TL hacim (Faz 3'te uygulanacak)
   sector_max_pct: 0.30               # sektör başına max %30 (Faz 3'te)
-  # Turnover azaltma:
+  # Turnover azaltma — denedi: 3-day rebalance Sharpe'ı çöktürdü (-0.01).
+  # 5-day haftalık rebalance optimal (Sharpe +0.40).
   rebalance_freq_days: 5             # her 5 işlem gününde 1 yeniden seç (haftalık)
   signal_smooth_window: 5            # sinyal EMA span (smoothing)
 

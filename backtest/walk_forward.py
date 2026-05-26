@@ -39,13 +39,28 @@ def make_splits(
     test_window_days: int | None = None,
     purge_days: int | None = None,
     embargo_days: int | None = None,
+    continuous: bool | None = None,
 ) -> list[WalkForwardSplit]:
-    """Tarih ekseninde rolling pencere üret."""
+    """Tarih ekseninde rolling pencere üret.
+
+    Modes:
+      continuous=False (default): klasik gap'li walk-forward. Her fold
+        kendi 252-gün train penceresinden başlar → fold'lar arası ~9 ay
+        boşluk. Out-of-sample sağlam ama test günü budget'ı düşük.
+
+      continuous=True: ANCHORED walk-forward. Initial train [0, 252],
+        sonra test pencereleri ARDIŞIK ilerler (fold N+1 test'i fold N
+        test'inden hemen sonra). Train penceresi de test ile birlikte
+        kayar (rolling). Out-of-sample bütünlüğü korunur ama tüm yıllarda
+        sürekli aktif → 'live trading' deployment simülasyonu.
+    """
     wf = SETTINGS["model"]["walk_forward"]
     train_window_days = train_window_days or wf["train_window_days"]
     test_window_days  = test_window_days  or wf["test_window_days"]
     purge_days        = purge_days        or wf["purge_days"]
     embargo_days      = embargo_days      or wf["embargo_days"]
+    if continuous is None:
+        continuous = bool(wf.get("continuous", False))
 
     dates = pd.DatetimeIndex(sorted(set(dates)))
     if len(dates) == 0:
@@ -65,10 +80,18 @@ def make_splits(
             break
 
         splits.append(WalkForwardSplit(train_start, train_end, test_start, test_end))
-        # Embargo: bir sonraki iterasyon test_end + embargo'dan başla
-        start = test_end + pd.Timedelta(days=embargo_days)
 
-    logger.info(f"Walk-forward: {len(splits)} fold üretildi "
+        if continuous:
+            # Test pencereleri ARDIŞIK: train'i de test_window kadar kaydır.
+            # Her fold yeni train üzerinde retrain → live'da rolling retrain
+            # davranışına eşdeğer.
+            start = start + pd.Timedelta(days=test_window_days)
+        else:
+            # Klasik: embargo + tam reset → fold'lar arası boşluk
+            start = test_end + pd.Timedelta(days=embargo_days)
+
+    mode = "continuous (anchored)" if continuous else "discrete (with gaps)"
+    logger.info(f"Walk-forward [{mode}]: {len(splits)} fold üretildi "
                 f"(train={train_window_days}d, test={test_window_days}d, "
                 f"purge={purge_days}d, embargo={embargo_days}d)")
     return splits
