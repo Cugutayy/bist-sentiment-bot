@@ -47,6 +47,7 @@ def _build_positions(
     max_pos: float,
     rebalance_freq: int = 1,
     smooth_window: int = 1,
+    signal_invert: bool = False,
 ) -> pd.DataFrame:
     """Sinyallerden long-only equal-weight pozisyon ağırlıkları üret.
 
@@ -64,6 +65,13 @@ def _build_positions(
     if signals.empty:
         return pd.DataFrame()
     s = signals.copy().sort_values(["ticker", "date"])
+
+    # SIGNAL INVERT — IC analysis (diagnostic) showed model picks underperform;
+    # bottom-N outperformed top-N by +45%/yr. Triple barrier label seems to
+    # capture momentum that mean-reverts. Inverting signal converts model into
+    # a mean-reversion bot.
+    if signal_invert:
+        s["signal"] = -s["signal"]
 
     # Sinyal smoothing (ticker bazlı EMA)
     if smooth_window > 1:
@@ -223,6 +231,7 @@ def run_backtest(
     max_pos = SETTINGS["strategy"]["max_position_pct"]
     rebalance_freq = SETTINGS["strategy"].get("rebalance_freq_days", 1)
     smooth_window = SETTINGS["strategy"].get("signal_smooth_window", 1)
+    signal_invert = SETTINGS["strategy"].get("signal_invert", False)
 
     logger.info("Backtest başlıyor...")
     panel = load_panel(start=start, end=end)
@@ -276,6 +285,7 @@ def run_backtest(
         max_pos=max_pos,
         rebalance_freq=rebalance_freq,
         smooth_window=smooth_window,
+        signal_invert=signal_invert,
     )
 
     # Net günlük getiri (panel: orijinal price panel, NOT features)

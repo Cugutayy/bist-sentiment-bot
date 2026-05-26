@@ -43,16 +43,33 @@ class TrainedModel:
 def build_training_set(panel_with_features: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     """Feature panelinden (X, y, feature_cols) çıkar.
 
-    Label: ticker bazında triple barrier → binarize (y=1 iff label==+1).
-    Tüm NaN satırlar atılır.
+    Label tipi config'den seçilir:
+      - 'triple_barrier' (default): TP / SL / time → binarize
+      - 'relative_outperform': forward N-day return > cross-sectional median
+        → model SECTION'l alpha öğrenir (XU100 buy-and-hold'u GEÇEN hisseler)
     """
     panel = panel_with_features.copy().sort_values(["ticker", "date"])
 
-    # Ticker bazında label hesabı (close üzerinden triple barrier)
-    panel["label"] = panel.groupby("ticker", group_keys=False)["close"].apply(
-        lambda s: triple_barrier_labels(s)
-    )
-    panel["target"] = (panel["label"] == 1).astype(int)
+    label_type = SETTINGS.get("labels", {}).get("label_type", "triple_barrier")
+
+    if label_type == "relative_outperform":
+        horizon = SETTINGS.get("labels", {}).get("relative_horizon_days", 5)
+        # Her ticker için N-gün forward return
+        panel["fwd_ret"] = panel.groupby("ticker", group_keys=False)["close"].apply(
+            lambda s: s.pct_change(horizon).shift(-horizon)
+        )
+        # Her tarih için cross-section median
+        panel["xs_median"] = panel.groupby("date")["fwd_ret"].transform("median")
+        # Target: bu ticker median'in üstünde mi?
+        panel["target"] = (panel["fwd_ret"] > panel["xs_median"]).astype(int)
+        # fwd_ret NaN ise (son N gün) atılmalı
+        panel = panel[panel["fwd_ret"].notna()].copy()
+    else:
+        # Klasik triple barrier
+        panel["label"] = panel.groupby("ticker", group_keys=False)["close"].apply(
+            lambda s: triple_barrier_labels(s)
+        )
+        panel["target"] = (panel["label"] == 1).astype(int)
 
     feat_cols = feature_columns(panel)
     keep = ["date", "ticker", "target"] + feat_cols

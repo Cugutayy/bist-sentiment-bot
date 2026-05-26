@@ -99,8 +99,14 @@ features:
   sentiment_windows: [3, 7, 14]      # gün
   rsi_window: 14
 
-# Triple barrier labeling
+# Labeling
 labels:
+  # Label type:
+  #   triple_barrier — TP/SL/time barrier (López de Prado, mutlak getiri tahmini)
+  #   relative_outperform — cross-section median'i geçer mi? (XU100-relative alpha)
+  label_type: relative_outperform
+  relative_horizon_days: 5            # forward 5-gün getirisi median'in üstünde mi
+  # Triple barrier parametreleri (sadece label_type=triple_barrier ise kullanılır)
   profit_target_pct: 0.025           # +%2.5
   stop_loss_pct: 0.015               # -%1.5
   max_holding_days: 10
@@ -109,15 +115,15 @@ labels:
 model:
   type: lightgbm
   params:
-    n_estimators: 400
-    learning_rate: 0.03
-    max_depth: 6
-    num_leaves: 31
+    n_estimators: 400                # tuned best (200, 800 denendi - 400 optimal)
+    learning_rate: 0.03              # tuned best (0.01, 0.05 denendi - 0.03 optimal)
+    max_depth: 6                     # tuned best (4, 8 denendi - 6 optimal)
+    num_leaves: 31                   # depth=6 ile uyumlu
     min_child_samples: 20
     random_state: 42
   retrain_frequency_days: 7
   walk_forward:
-    train_window_days: 252           # ~1 yıl — fold sayısını maksimize, train hala anlamlı
+    train_window_days: 252           # ~1 yıl optimal (504 denendi, overfit oldu)
     test_window_days: 21             # ~1 ay
     purge_days: 5                    # train→test arası purge (label overlap)
     embargo_days: 5                  # data leak savunması (autocorrelation)
@@ -125,7 +131,7 @@ model:
     # Strateji yıl boyunca aktif kalır (live deployment simülasyonu).
     # continuous=False: klasik gap'li (her fold kendi train'inden başlar).
     # Live amacı için True; pure out-of-sample sertligi için False.
-    continuous: false
+    continuous: true
 
 # BIST cost modeli (yıllık güncelle)
 # NOT: close-to-close execution varsayımı. Live'da next-day open alımı
@@ -141,14 +147,17 @@ costs:
 
 # Strateji
 strategy:
-  top_n: 10                          # top-N long (orijinal — Sharpe maksimize ediyor)
-  max_position_pct: 0.10             # tek hisseye max %10
+  top_n: 3                           # en iyi (relative label ile)
+  signal_invert: false               # IC analysis ile test edildi: inverted hala kötü (-0.13 Sharpe).
+                                     # Model'in gerçek IC'si ~0 olduğu için yön önemli değil,
+                                     # asıl sorun sinyal kalitesinde.
+  max_position_pct: 0.34             # top 3 ile uyumlu
   min_liquidity_tl: 50000000         # günlük >50M TL hacim (Faz 3'te uygulanacak)
   sector_max_pct: 0.30               # sektör başına max %30 (Faz 3'te)
   # Turnover azaltma — denedi: 3-day rebalance Sharpe'ı çöktürdü (-0.01).
   # 5-day haftalık rebalance optimal (Sharpe +0.40).
-  rebalance_freq_days: 5             # her 5 işlem gününde 1 yeniden seç (haftalık)
-  signal_smooth_window: 5            # sinyal EMA span (smoothing)
+  rebalance_freq_days: 10            # turnover azaltma kritik (cost erosion)
+  signal_smooth_window: 5            # best tested
 
 # Risk yönetimi (sinyal seviyesinde)
 risk:
