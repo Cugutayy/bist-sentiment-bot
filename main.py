@@ -58,13 +58,17 @@ def cmd_aggregate() -> None:
 def cmd_predict() -> None:
     from strategy.shortlist import generate_shortlist
     from reports.console import print_shortlist
-    from reports.paper_trading import log_predictions, score_outcomes, summary
+    from reports.paper_trading import log_predictions, score_outcomes
+    from reports.paper_book import open_positions, update_positions, summary as book_summary
     items = generate_shortlist()
     print_shortlist(items)
-    # Paper trading: predictions log + geçmişlerin outcome'larını skorla
+    # Legacy paper log (5/10/20 gün horizon scoring)
     log_predictions(items)
     score_outcomes()
-    print("Paper trading özet:", summary())
+    # New paper book (open/close pozisyon, triple barrier)
+    open_positions(items)
+    update_positions()
+    print("Paper book özet:", book_summary())
 
 
 def cmd_backtest() -> None:

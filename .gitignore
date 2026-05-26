@@ -21,6 +21,7 @@ data/processed/sentiment_2*.parquet
 # CLOUD DASHBOARD için küçük artifact'lar — sync_artifacts.py ile commit
 !data/processed/backtests/
 !data/processed/paper_trades.parquet
+!data/processed/paper_book.parquet
 !data/processed/sentiment_daily.parquet
 !data/processed/shortlist_*.parquet
 
