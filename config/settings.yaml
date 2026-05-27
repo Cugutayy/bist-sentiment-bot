@@ -114,6 +114,8 @@ labels:
 # Model
 model:
   type: lightgbm
+  n_ensemble: 5                      # 10 denedi, 5 ile aynı (diminishing returns)
+  multi_horizon: null                # [3,5,10] denedi: dilution, Sharpe 0.44 (5tek 0.47)
   params:
     n_estimators: 400                # tuned best (200, 800 denendi - 400 optimal)
     learning_rate: 0.03              # tuned best (0.01, 0.05 denendi - 0.03 optimal)
@@ -147,10 +149,14 @@ costs:
 
 # Strateji
 strategy:
-  top_n: 3                           # en iyi (relative label ile)
-  signal_invert: false               # IC analysis ile test edildi: inverted hala kötü (-0.13 Sharpe).
-                                     # Model'in gerçek IC'si ~0 olduğu için yön önemli değil,
-                                     # asıl sorun sinyal kalitesinde.
+  top_n: 3                           # tested best
+  signal_invert: false               # IC analysis ile test edildi
+  long_short: false                  # Bull market'te zarar (test edildi -1.25 Sharpe)
+  short_weight: 0.3
+  conviction_weight: false           # Test edildi top3'te marjinal, top10'da kötü
+  vol_target_annual: 0.60            # OPTIMAL — sharpe 0.80, leverage avg 1.5x, %74 < cap
+                                     # 80% denedi: %74 gün 2x cap (saturated), iyileşme azaldı
+                                     # 60%: leverage rahat, headroom var
   max_position_pct: 0.34             # top 3 ile uyumlu
   min_liquidity_tl: 50000000         # günlük >50M TL hacim (Faz 3'te uygulanacak)
   sector_max_pct: 0.30               # sektör başına max %30 (Faz 3'te)

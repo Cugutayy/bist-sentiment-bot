@@ -82,10 +82,15 @@ def explain_trade(
 
 
 def build_trade_ledger(run_id: str | None = None) -> pd.DataFrame:
-    """Backtest run için tam trade ledger + reasoning.
+    """Backtest run için tam trade ledger + reasoning + entry/exit price.
 
     Reasoning için ARTIFACTS/<run_id>/fold_*.joblib model'ler kullanılır.
     Her trade, o günkü en yakın fold'un model'iyle açıklanır.
+
+    Entry price: o günün OPEN fiyatı (gerçek next-day open execution
+    simülasyonunda olduğu gibi). Dibi/tepeyi yakalama YOK.
+    Trade ledger'da OPEN + CLOSE + DAY_RANGE gösterilir ki "look-ahead"
+    şüphesi açıkça çürütülsün.
     """
     from features.feature_engineering import build_features, feature_columns
     from features.loader import load_panel
@@ -135,22 +140,43 @@ def build_trade_ledger(run_id: str | None = None) -> pd.DataFrame:
         trades["score"] = float("nan")
         return trades
 
-    # Feature panel
+    # Feature panel + OHLC for entry/close price disclosure
     panel = load_panel()
     features = build_features(panel, lag=True)
     feat_cols = feature_columns(features)
 
-    # Her trade için: en yakın fold model'i + o gün feature'ı + reasoning
+    # OHLC lookup (anti-lookahead kanıtı için open + close gösteririz)
+    ohlc = panel.set_index(["date", "ticker"])[["open", "high", "low", "close"]]
+
+    # Her trade için: en yakın fold model'i + feature snapshot + entry/close
     rationales = []
     scores = []
+    open_prices = []
+    close_prices = []
+    day_lows = []
+    day_highs = []
     for _, row in trades.iterrows():
         trade_date = row["date"]
-        # En yakın fold (genelde aynı fold)
+        ticker = row["ticker"]
+
+        # OHLC bilgisi — anti-lookahead disclosure
+        try:
+            o = ohlc.loc[(trade_date, ticker)]
+            open_prices.append(float(o["open"]))
+            close_prices.append(float(o["close"]))
+            day_lows.append(float(o["low"]))
+            day_highs.append(float(o["high"]))
+        except KeyError:
+            open_prices.append(float("nan"))
+            close_prices.append(float("nan"))
+            day_lows.append(float("nan"))
+            day_highs.append(float("nan"))
+
+        # Model reasoning
         nearest_fold = min(folds.keys(),
                           key=lambda i: abs((folds[i]["test_start"] - trade_date).days))
         fold = folds[nearest_fold]
-        # O gün ticker'a ait feature satırı
-        snapshot = features[(features["date"] == trade_date) & (features["ticker"] == row["ticker"])]
+        snapshot = features[(features["date"] == trade_date) & (features["ticker"] == ticker)]
         if snapshot.empty:
             rationales.append("")
             scores.append(float("nan"))
@@ -165,6 +191,10 @@ def build_trade_ledger(run_id: str | None = None) -> pd.DataFrame:
         exp = explain_trade(fold["estimator"], fold["feat_cols"], feature_row)
         rationales.append(exp["rationale"])
 
+    trades["entry_price"] = open_prices    # ← ALIM bu fiyattan (open[t])
+    trades["close_price"] = close_prices   # ← Aynı günün kapanışı
+    trades["day_low"] = day_lows
+    trades["day_high"] = day_highs
     trades["score"] = scores
     trades["rationale"] = rationales
     return trades

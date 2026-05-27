@@ -48,6 +48,9 @@ def _build_positions(
     rebalance_freq: int = 1,
     smooth_window: int = 1,
     signal_invert: bool = False,
+    long_short: bool = False,
+    short_weight: float = 0.5,
+    conviction_weight: bool = False,
 ) -> pd.DataFrame:
     """Sinyallerden long-only equal-weight pozisyon ağırlıkları üret.
 
@@ -103,12 +106,33 @@ def _build_positions(
             rebalance_dates.add(fold_dates[j])
 
     # Sadece rebalance günlerinde top-N seç
-    rb = s[s["date"].isin(rebalance_dates)].copy()
-    rb["rank"] = rb.groupby("date")["signal"].rank(ascending=False, method="first")
-    rb = rb[rb["rank"] <= top_n]
-    n_per_day = rb.groupby("date").size()
-    rb = rb.merge(n_per_day.rename("n_picked"), left_on="date", right_index=True)
-    rb["weight"] = (1.0 / rb["n_picked"]).clip(upper=max_pos)
+    rb_all = s[s["date"].isin(rebalance_dates)].copy()
+    # Long-short veya long-only?
+    if long_short:
+        # Long top-N, short bottom-N (market-neutral or partially hedged)
+        rb_all["rank_long"]  = rb_all.groupby("date")["signal"].rank(ascending=False, method="first")
+        rb_all["rank_short"] = rb_all.groupby("date")["signal"].rank(ascending=True,  method="first")
+        rb_long  = rb_all[rb_all["rank_long"]  <= top_n].copy()
+        rb_short = rb_all[rb_all["rank_short"] <= top_n].copy()
+        # Equal weight within long sleeve, gross long = 1 - short_weight
+        long_gross = 1.0 - short_weight
+        rb_long["weight"]  = (long_gross / top_n)
+        rb_short["weight"] = -(short_weight / top_n)
+        rb = pd.concat([rb_long, rb_short], ignore_index=True)
+    else:
+        rb_all["rank"] = rb_all.groupby("date")["signal"].rank(ascending=False, method="first")
+        rb = rb_all[rb_all["rank"] <= top_n].copy()
+        if conviction_weight:
+            # Conviction weighting: signal strength = position size
+            # Her gün toplam = 1.0. Higher signal → higher weight.
+            # Negatif sinyaller sıfırlanır (zaten top-N içinde olduğu için tüm sinyaller pozitif tarafta)
+            rb["signal_pos"] = rb["signal"].clip(lower=0.001)
+            rb["signal_sum"] = rb.groupby("date")["signal_pos"].transform("sum")
+            rb["weight"] = (rb["signal_pos"] / rb["signal_sum"]).clip(upper=max_pos)
+        else:
+            n_per_day = rb.groupby("date").size()
+            rb = rb.merge(n_per_day.rename("n_picked"), left_on="date", right_index=True)
+            rb["weight"] = (1.0 / rb["n_picked"]).clip(upper=max_pos)
 
     # BUG FIX (continuous mode): rebalance günlerinde TÜM ticker'lar explicit
     # 0 ile başla; sadece seçilenler weight alır. Sonra ffill yap (pozisyon
@@ -174,12 +198,32 @@ def _daily_pnl(
 
     # Her weights günü için bir önceki weight'i shift'le bul (ilk gün 0 kabul)
     w_prev = w.shift(1).fillna(0)
-    held = pd.DataFrame(
-        np.minimum(w_prev.values, w.values),
+    # Long-short uyumluluğu: long ve short bacakları ayrı işle.
+    # Long (w>=0): held = min(w_prev_long, w_long), exit/enter aynı
+    # Short (w<0): mutlak değer üzerinden aynı mantık, sonra negatif geri
+    w_long = w.clip(lower=0)
+    w_long_prev = w_prev.clip(lower=0)
+    held_long = pd.DataFrame(
+        np.minimum(w_long_prev.values, w_long.values),
         index=w.index, columns=w.columns,
     )
-    exited = (w_prev - held).clip(lower=0)
-    entered = (w - held).clip(lower=0)
+    exited_long  = (w_long_prev - held_long).clip(lower=0)
+    entered_long = (w_long - held_long).clip(lower=0)
+
+    # Short bacak (|w| üzerinde aynı mantık)
+    w_short_abs = (-w).clip(lower=0)
+    w_short_abs_prev = (-w_prev).clip(lower=0)
+    held_short_abs = pd.DataFrame(
+        np.minimum(w_short_abs_prev.values, w_short_abs.values),
+        index=w.index, columns=w.columns,
+    )
+    exited_short_abs  = (w_short_abs_prev - held_short_abs).clip(lower=0)
+    entered_short_abs = (w_short_abs - held_short_abs).clip(lower=0)
+
+    # Short pozisyonun PnL'i ters (cc * -1)
+    held   = held_long - held_short_abs
+    exited = exited_long + exited_short_abs    # mutlak değer, cost için
+    entered = entered_long + entered_short_abs # mutlak değer, cost için
 
     # Returns'leri weights'in tarihlerine align et (sadece o günler için)
     cc_aligned = cc_ret.loc[:, common_cols].reindex(w.index)
@@ -200,12 +244,17 @@ def _daily_pnl(
     on_aligned = on_aligned.fillna(0)
     id_aligned = id_aligned.fillna(0)
 
+    # Long ve short bacak PnL'i ayrı (cost için exited/entered absolute zaten)
     pnl_held = (held * cc_aligned).sum(axis=1)
-    pnl_exit = (exited * on_aligned).sum(axis=1)
-    pnl_enter = (entered * id_aligned).sum(axis=1)
-    gross = pnl_held + pnl_exit + pnl_enter
+    # Exit ve enter long bacağı için: long açılış kar pozitif, short açılış kar negatif çarpan
+    pnl_exit_long  = (exited_long  * on_aligned).sum(axis=1)
+    pnl_enter_long = (entered_long * id_aligned).sum(axis=1)
+    # Short bacağı: stock yükselirse short LOSS, o yüzden NEGATIF
+    pnl_exit_short  = -(exited_short_abs  * on_aligned).sum(axis=1)
+    pnl_enter_short = -(entered_short_abs * id_aligned).sum(axis=1)
+    gross = pnl_held + pnl_exit_long + pnl_enter_long + pnl_exit_short + pnl_enter_short
 
-    # Maliyet: sadece exit + enter (held için 0)
+    # Maliyet: exit + enter (her iki bacak için absolute turnover)
     turnover = exited.sum(axis=1) + entered.sum(axis=1)
     cost_pct = turnover * cost.one_way_cost()
 
@@ -232,14 +281,39 @@ def run_backtest(
     rebalance_freq = SETTINGS["strategy"].get("rebalance_freq_days", 1)
     smooth_window = SETTINGS["strategy"].get("signal_smooth_window", 1)
     signal_invert = SETTINGS["strategy"].get("signal_invert", False)
+    long_short    = SETTINGS["strategy"].get("long_short", False)
+    short_weight  = SETTINGS["strategy"].get("short_weight", 0.5)
+    conviction_w  = SETTINGS["strategy"].get("conviction_weight", False)
 
     logger.info("Backtest başlıyor...")
     panel = load_panel(start=start, end=end)
     features = build_features(panel, lag=True)
-    train_df_all, _, feat_cols = build_training_set(features)
-    logger.info(f"Training set hazır: {len(train_df_all):,} satır × {len(feat_cols)} feature")
 
-    dates = pd.DatetimeIndex(sorted(train_df_all["date"].unique()))
+    # Multi-horizon ensemble: her horizon için ayrı training set + model
+    horizons = SETTINGS["model"].get("multi_horizon", None)
+    label_type = SETTINGS.get("labels", {}).get("label_type", "triple_barrier")
+    use_multi_horizon = (
+        horizons and label_type == "relative_outperform" and len(horizons) > 1
+    )
+
+    if use_multi_horizon:
+        logger.info(f"Multi-horizon ensemble: {horizons}")
+    else:
+        horizons = [None]   # tek model
+
+    # Training sets her horizon için (NaN bırakılan rows farklı olabilir)
+    training_sets = {}
+    feat_cols = None
+    for h in horizons:
+        tds, _, fc = build_training_set(features, horizon_override=h)
+        training_sets[h] = tds
+        if feat_cols is None:
+            feat_cols = fc
+    logger.info(f"Training sets hazır: {[(h, len(td)) for h, td in training_sets.items()]} × {len(feat_cols)} feature")
+
+    # Walk-forward split'ler ilk horizon'un tarihlerine göre
+    primary_td = training_sets[horizons[0]]
+    dates = pd.DatetimeIndex(sorted(primary_td["date"].unique()))
     splits = make_splits(dates)
     if not splits:
         raise RuntimeError("Walk-forward split üretilemedi — veri kısa olabilir")
@@ -249,31 +323,52 @@ def run_backtest(
     run_id = make_run_id()
 
     for i, split in enumerate(splits):
-        train = train_df_all[(train_df_all["date"] >= split.train_start) &
-                             (train_df_all["date"] <= split.train_end)]
-        test = train_df_all[(train_df_all["date"] >= split.test_start) &
-                            (train_df_all["date"] < split.test_end)]
-        if train.empty or test.empty or train["target"].nunique() < 2:
-            logger.warning(f"Fold {i}: yetersiz veri ({len(train)} train, {len(test)} test)")
+        # Her horizon için fold-train, predict, average signals
+        per_horizon_sigs = []
+        for h in horizons:
+            td = training_sets[h]
+            train = td[(td["date"] >= split.train_start) & (td["date"] <= split.train_end)]
+            test = td[(td["date"] >= split.test_start) & (td["date"] < split.test_end)]
+            if train.empty or test.empty or train["target"].nunique() < 2:
+                continue
+            try:
+                tm = train_fold(train, feat_cols)
+            except Exception as e:
+                logger.error(f"Fold {i} (h={h}): training fail → {e}")
+                continue
+            sig = predict_fold(tm, test)
+            per_horizon_sigs.append(sig)
+            if h == horizons[0]:
+                save_model(tm, run_id, i)   # primary horizon artifact
+
+        if not per_horizon_sigs:
+            logger.warning(f"Fold {i}: hiç başarılı horizon yok")
             continue
-        try:
-            tm = train_fold(train, feat_cols)
-        except Exception as e:
-            logger.error(f"Fold {i}: training fail → {e}")
-            continue
-        sig = predict_fold(tm, test)
+
+        # Multi-horizon ortalama
+        if len(per_horizon_sigs) == 1:
+            sig = per_horizon_sigs[0]
+        else:
+            merged = per_horizon_sigs[0].copy()
+            for other in per_horizon_sigs[1:]:
+                merged = merged.merge(other.rename(columns={"signal": "signal_other"}),
+                                      on=["date", "ticker"], how="outer")
+                merged["signal"] = merged[["signal", "signal_other"]].mean(axis=1)
+                merged = merged.drop(columns=["signal_other"])
+            sig = merged[["date", "ticker", "signal"]]
         all_signals.append(sig)
-        save_model(tm, run_id, i)   # her fold için artifact diske yaz
+        train = training_sets[horizons[0]]
+        train_fold_df = train[(train["date"] >= split.train_start) & (train["date"] <= split.train_end)]
+        test_fold_df = train[(train["date"] >= split.test_start) & (train["date"] < split.test_end)]
         fold_metrics.append({
             "fold": i,
-            "train_n": len(train),
-            "test_n": len(test),
+            "train_n": len(train_fold_df),
+            "test_n": len(test_fold_df),
             "train_period": f"{split.train_start.date()} → {split.train_end.date()}",
             "test_period":  f"{split.test_start.date()} → {split.test_end.date()}",
-            "positive_rate_train": float(train["target"].mean()),
+            "positive_rate_train": float(train_fold_df["target"].mean()) if len(train_fold_df) else 0.0,
         })
-        logger.info(f"Fold {i}: train={len(train)} test={len(test)} "
-                    f"signals={len(sig)} pos_rate={train['target'].mean():.3f}")
+        logger.info(f"Fold {i}: train={len(train_fold_df)} test={len(test_fold_df)} horizons_used={len(per_horizon_sigs)}")
 
     if not all_signals:
         raise RuntimeError("Hiç başarılı fold yok")
@@ -286,10 +381,31 @@ def run_backtest(
         rebalance_freq=rebalance_freq,
         smooth_window=smooth_window,
         signal_invert=signal_invert,
+        long_short=long_short,
+        short_weight=short_weight,
+        conviction_weight=conviction_w,
     )
 
-    # Net günlük getiri (panel: orijinal price panel, NOT features)
-    net = _daily_pnl(weights, panel, cost)
+    # Vol-targeting: portföy realize ettiği vol'a göre exposure scale et.
+    # Risk yönetimi literatürü (Moskowitz et al. 2012, Asness 2013):
+    # target_vol / realized_vol = exposure_multiplier
+    # Yüksek vol döneminde exposure düşer, düşük vol döneminde artar.
+    # Bu Sharpe'ı stabilize eder, drawdown azaltır.
+    vol_target_annual = SETTINGS["strategy"].get("vol_target_annual", None)
+    if vol_target_annual:
+        # Önce raw daily PnL hesapla, sonra scale et
+        raw_net = _daily_pnl(weights, panel, cost)
+        # Rolling realized vol (60d)
+        roll_vol = raw_net.rolling(60, min_periods=20).std() * np.sqrt(252)
+        # Lag bir gün — vol için today'i bilemeyiz, dün önceki gözlemi kullan
+        mult = (vol_target_annual / roll_vol).shift(1).clip(0.0, 2.0).fillna(1.0)
+        # Scale weights gün gün
+        weights_scaled = weights.multiply(mult, axis=0).fillna(0.0)
+        net = _daily_pnl(weights_scaled, panel, cost)
+        weights = weights_scaled  # update for reporting
+    else:
+        # Net günlük getiri (panel: orijinal price panel, NOT features)
+        net = _daily_pnl(weights, panel, cost)
     # Benchmark: SADECE backtest test günlerinde, apples-to-apples karşılaştırma
     bench = _benchmark_returns(panel).reindex(net.index).fillna(0)
 
