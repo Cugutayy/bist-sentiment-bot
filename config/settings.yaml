@@ -149,14 +149,14 @@ costs:
 
 # Strateji
 strategy:
+  signal_source: factor              # ml | factor | blend
   top_n: 3                           # tested best
   signal_invert: false               # IC analysis ile test edildi
-  long_short: false                  # Bull market'te zarar (test edildi -1.25 Sharpe)
-  short_weight: 0.3
+  long_short: false                  # Market-neutral TL %40 risk-free altında kaldı → long-only
+  short_weight: 0.5
   conviction_weight: false           # Test edildi top3'te marjinal, top10'da kötü
-  vol_target_annual: 0.60            # OPTIMAL — sharpe 0.80, leverage avg 1.5x, %74 < cap
-                                     # 80% denedi: %74 gün 2x cap (saturated), iyileşme azaldı
-                                     # 60%: leverage rahat, headroom var
+  vol_target_annual: 0.80            # factor long-only + leverage
+  leverage_cap: 2.0                  # max kaldirac (vol-target clip)
   max_position_pct: 0.34             # top 3 ile uyumlu
   min_liquidity_tl: 50000000         # günlük >50M TL hacim (Faz 3'te uygulanacak)
   sector_max_pct: 0.30               # sektör başına max %30 (Faz 3'te)

@@ -285,9 +285,33 @@ def run_backtest(
     short_weight  = SETTINGS["strategy"].get("short_weight", 0.5)
     conviction_w  = SETTINGS["strategy"].get("conviction_weight", False)
 
-    logger.info("Backtest başlıyor...")
+    signal_source = SETTINGS["strategy"].get("signal_source", "ml")  # ml | factor | blend
+
+    logger.info(f"Backtest başlıyor... (signal_source={signal_source})")
     panel = load_panel(start=start, end=end)
     features = build_features(panel, lag=True)
+
+    # ── FACTOR SIGNAL PATH (ML'siz, akademik faktör composite) ──────────
+    if signal_source in ("factor", "blend"):
+        factor_sig = _build_factor_signal(features)
+        if signal_source == "factor":
+            # ML eğitimi yok — direkt faktör sinyali kullan
+            run_id = make_run_id()
+            signals_concat = factor_sig
+            # Fold metrics minimal (faktör için fold yok ama walk-forward tarih aralığı)
+            fold_metrics = [{
+                "fold": 0, "train_n": 0, "test_n": len(factor_sig),
+                "train_period": "factor (no training)",
+                "test_period": f"{factor_sig['date'].min().date()} → {factor_sig['date'].max().date()}",
+                "positive_rate_train": 0.0,
+            }]
+            weights = _build_positions(
+                signals_concat, top_n=top_n, max_pos=max_pos,
+                rebalance_freq=rebalance_freq, smooth_window=smooth_window,
+                signal_invert=signal_invert, long_short=long_short,
+                short_weight=short_weight, conviction_weight=conviction_w,
+            )
+            return _finalize_backtest(weights, panel, cost, fold_metrics, splits=None, run_id=run_id)
 
     # Multi-horizon ensemble: her horizon için ayrı training set + model
     horizons = SETTINGS["model"].get("multi_horizon", None)
@@ -374,6 +398,23 @@ def run_backtest(
         raise RuntimeError("Hiç başarılı fold yok")
 
     signals_concat = pd.concat(all_signals, ignore_index=True)
+
+    # BLEND: ML sinyali + factor sinyali ortalaması (cross-sectional rank uzayında)
+    if signal_source == "blend":
+        fs = _build_factor_signal(features)
+        # Her ikisini de günlük cross-sectional rank'e çevir (0..1), sonra ortala
+        def rank_norm(df):
+            df = df.copy()
+            df["rk"] = df.groupby("date")["signal"].rank(pct=True)
+            return df[["date", "ticker", "rk"]]
+        ml_r = rank_norm(signals_concat).rename(columns={"rk": "ml"})
+        fs_r = rank_norm(fs).rename(columns={"rk": "fc"})
+        merged = ml_r.merge(fs_r, on=["date", "ticker"], how="inner")
+        blend_w = SETTINGS["strategy"].get("blend_factor_weight", 0.5)
+        merged["signal"] = (1 - blend_w) * merged["ml"] + blend_w * merged["fc"]
+        signals_concat = merged[["date", "ticker", "signal"]]
+        logger.info(f"Blend signal: ML×{1-blend_w:.1f} + Factor×{blend_w:.1f}, {len(signals_concat)} satır")
+
     weights = _build_positions(
         signals_concat,
         top_n=top_n,
@@ -385,34 +426,28 @@ def run_backtest(
         short_weight=short_weight,
         conviction_weight=conviction_w,
     )
+    return _finalize_backtest(weights, panel, cost, fold_metrics, splits=splits, run_id=run_id)
 
-    # Vol-targeting: portföy realize ettiği vol'a göre exposure scale et.
-    # Risk yönetimi literatürü (Moskowitz et al. 2012, Asness 2013):
-    # target_vol / realized_vol = exposure_multiplier
-    # Yüksek vol döneminde exposure düşer, düşük vol döneminde artar.
-    # Bu Sharpe'ı stabilize eder, drawdown azaltır.
+
+def _finalize_backtest(weights, panel, cost, fold_metrics, splits, run_id) -> BacktestResult:
+    """Weights → vol-target → PnL → benchmark → artifacts. ML ve factor path ortak."""
+    # Vol-targeting (Moskowitz et al. 2012): exposure = target_vol / realized_vol
     vol_target_annual = SETTINGS["strategy"].get("vol_target_annual", None)
+    lev_cap = SETTINGS["strategy"].get("leverage_cap", 2.0)
     if vol_target_annual:
-        # Önce raw daily PnL hesapla, sonra scale et
         raw_net = _daily_pnl(weights, panel, cost)
-        # Rolling realized vol (60d)
         roll_vol = raw_net.rolling(60, min_periods=20).std() * np.sqrt(252)
-        # Lag bir gün — vol için today'i bilemeyiz, dün önceki gözlemi kullan
-        mult = (vol_target_annual / roll_vol).shift(1).clip(0.0, 2.0).fillna(1.0)
-        # Scale weights gün gün
-        weights_scaled = weights.multiply(mult, axis=0).fillna(0.0)
-        net = _daily_pnl(weights_scaled, panel, cost)
-        weights = weights_scaled  # update for reporting
-    else:
-        # Net günlük getiri (panel: orijinal price panel, NOT features)
+        mult = (vol_target_annual / roll_vol).shift(1).clip(0.0, lev_cap).fillna(1.0)
+        weights = weights.multiply(mult, axis=0).fillna(0.0)
         net = _daily_pnl(weights, panel, cost)
-    # Benchmark: SADECE backtest test günlerinde, apples-to-apples karşılaştırma
-    bench = _benchmark_returns(panel).reindex(net.index).fillna(0)
+    else:
+        net = _daily_pnl(weights, panel, cost)
 
+    bench = _benchmark_returns(panel).reindex(net.index).fillna(0)
     overall = summary(net, weights=weights)
     bench_summary = summary(bench)
-
-    logger.info(f"Backtest bitti: {len(splits)} fold, {len(net)} işlem günü")
+    n_folds = len(splits) if splits else 1
+    logger.info(f"Backtest bitti: {n_folds} fold, {len(net)} işlem günü")
     result = BacktestResult(
         daily_returns=net,
         daily_weights=weights,
@@ -421,10 +456,43 @@ def run_backtest(
         benchmark_returns=bench,
         benchmark_metrics=bench_summary,
     )
-
-    # Diske yaz — inceleyebilmen için
     _save_backtest_artifacts(result, run_id)
     return result
+
+
+def _build_factor_signal(features: pd.DataFrame) -> pd.DataFrame:
+    """Akademik faktör composite — ML'siz. Cross-sectional z-score kombinasyonu.
+
+    Kanıtlanmış faktörler (market-neutral L/S Sharpe ölçüldü):
+      - low idiosyncratic vol (Ang et al. 2006): en güçlü, Sharpe 1.81 gross
+      - low total vol
+      - 20-gün ve 60-gün momentum (Jegadeesh-Titman)
+    Yüksek composite skor = long adayı.
+    """
+    df = features.copy()
+    # Cross-sectional z-score helper
+    def csz(col):
+        m = df.groupby("date")[col].transform("mean")
+        s = df.groupby("date")[col].transform("std")
+        return (df[col] - m) / s.replace(0, np.nan)
+
+    # Feature'lar zaten lag=True (t-1 observable). idio_vol_60, vol_20, mom_20, momentum_60 mevcut.
+    comp = pd.Series(0.0, index=df.index)
+    weights_cfg = SETTINGS["strategy"].get("factor_weights", {
+        "idio_vol_60": -1.0,   # düşük idio-vol iyi
+        "vol_20": -0.5,        # düşük vol iyi
+        "ret_20": 0.5,         # momentum
+        "momentum_60": 0.3,    # uzun momentum
+    })
+    for col, w in weights_cfg.items():
+        if col in df.columns:
+            comp = comp + w * csz(col).fillna(0.0)
+
+    out = df[["date", "ticker"]].copy()
+    out["signal"] = comp
+    # NaN feature'lı satırları çıkar (warm-up)
+    out = out[df["idio_vol_60"].notna() | df["vol_20"].notna()]
+    return out.dropna(subset=["signal"])
 
 
 def _save_backtest_artifacts(result: BacktestResult, run_id: str) -> None:
