@@ -1,0 +1,27 @@
+{
+  "last_update": "2026-06-09",
+  "cash": 140813.5264464348,
+  "positions": {
+    "BTC-USD": {
+      "ticker": "BTC-USD",
+      "weight": -0.2341767730029844,
+      "qty": -0.37923776681251853,
+      "entry_price": 61749.328125,
+      "entry_date": "2026-06-09",
+      "current_price": 61749.328125,
+      "current_value": -23417.67730029844
+    },
+    "ETH-USD": {
+      "ticker": "ETH-USD",
+      "weight": -0.17395849146136352,
+      "qty": -10.625950181594346,
+      "entry_price": 1637.1099853515625,
+      "entry_date": "2026-06-09",
+      "current_price": 1637.1099853515625,
+      "current_value": -17395.849146136352
+    }
+  },
+  "total_value": 100000.0,
+  "benchmark_value": 100000.0,
+  "days_live": 0
+}

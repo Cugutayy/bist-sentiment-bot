@@ -24,6 +24,8 @@ data/processed/sentiment_2*.parquet
 !data/processed/paper_book.parquet
 !data/processed/sentiment_daily.parquet
 !data/processed/shortlist_*.parquet
+!data/processed/trend_paper/
+!data/processed/trend_paper/*.json
 
 # Modeller (artifact'lar repo'da değil — her ortam kendisi backtest ile üretir)
 models/*.joblib

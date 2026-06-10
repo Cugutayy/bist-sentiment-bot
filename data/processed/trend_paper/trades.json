@@ -1,0 +1,22 @@
+[
+  {
+    "date": "2026-06-09",
+    "ticker": "BTC-USD",
+    "action": "SELL",
+    "weight_old": 0.0,
+    "weight_new": -0.2341767730029844,
+    "qty_old": 0.0,
+    "qty_new": -0.37923776681251853,
+    "price": 61749.328125
+  },
+  {
+    "date": "2026-06-09",
+    "ticker": "ETH-USD",
+    "action": "SELL",
+    "weight_old": 0.0,
+    "weight_new": -0.17395849146136352,
+    "qty_old": 0.0,
+    "qty_new": -10.625950181594346,
+    "price": 1637.1099853515625
+  }
+]
