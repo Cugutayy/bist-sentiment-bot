@@ -1,4 +1,4 @@
-# BIST Sentiment Bot
+# BIST Sentiment Research
 
 BIST 100 için günlük **top-N long shortlist** üreten araştırma pipeline'ı.
 KAP açıklamaları + finans haberleri + Claude LLM tabanlı sentiment skorlaması
@@ -8,9 +8,9 @@ her akşam telegram/email ile aday listesi gönderir.
 > ⚠️ **Bu sistem otomatik emir göndermez.** Çıktısı: shortlist + "neden"
 > kanıtı. Emir girişi insandadır.
 
-## Tasarım Felsefesi
+## Yöntem
 
-- **Honest backtest**: purged + embargoed walk-forward, realistik BIST cost
+- **Backtest yöntemi**: purged + embargoed walk-forward, realistik BIST cost
   modeli (komisyon + BSMV + spread), survivorship bias için point-in-time
   BIST 100 üyelik.
 - **Modüler**: her aşama (ingestion → NLP → features → model → strategy)
@@ -133,7 +133,7 @@ piyasa zaten sentiment'i hızlıca fiyatlıyor (overreaction → mean-reversion)
 **Graceful fallback**: sentiment data yoksa tüm sent_* feature'lar 0,
 model fiyat-only baseline'a düşer (her zaman çalışır).
 
-## Bilinen yfinance / BIST Sorunları (UNUTMA)
+## Veri Kaynağı Sınırlamaları
 
 Yahoo Finance, BIST verisi için **resmi/garanti** kaynak değil; unofficial
 scraper. Şu sorunları sistemde defansif olarak ele aldık:
@@ -197,7 +197,7 @@ python scripts/probe_feeds.py
 | Turnover (günlük) | **2.4%** | — |
 | n_days | 82 | 82 |
 
-**Honest yorum:**
+**Sonuçların kapsamı:**
 - Strateji XU100'ün negatif olduğu test günlerinde pozitif Sharpe üretti.
 - CAGR düşük çünkü XU100 trend dönemleri test'in dışında kaldı.
 - Max DD -37% yüksek — concentration riski (top-10 long, sektör cap yok).
